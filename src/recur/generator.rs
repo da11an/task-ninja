@@ -1,10 +1,10 @@
 // Recurrence generation logic
 
-use chrono::{DateTime, Datelike, Duration};
+use chrono::{DateTime, Datelike, Duration, TimeZone};
 use rusqlite::Connection;
 use anyhow::Result;
 use crate::recur::parser::{RecurRule, RecurFrequency};
-use crate::repo::TaskRepo;
+use crate::repo::{TaskRepo, TemplateRepo};
 use crate::models::Task;
 use std::collections::HashMap;
 
@@ -182,28 +182,77 @@ impl RecurGenerator {
     }
     
     fn create_instance(conn: &Connection, seed: &Task, occurrence_ts: i64) -> Result<i64> {
-        // TODO: Load template if specified and merge attributes
-        // For MVP, we'll just use seed task attributes
+        // Load template if specified and merge attributes
+        // Attribute precedence: Template → Seed → Computed dates
+        let (final_project_id, final_due_ts, final_scheduled_ts, final_wait_ts, final_alloc_secs, final_udas, final_tags) = 
+            if let Some(template_name) = &seed.template {
+                // Load template
+                if let Some(template) = TemplateRepo::get_by_name(conn, template_name)? {
+                    // Get seed task tags
+                    let mut stmt = conn.prepare("SELECT tag FROM task_tags WHERE task_id = ?1")?;
+                    let tag_rows = stmt.query_map([seed.id.unwrap()], |row| {
+                        Ok(row.get::<_, String>(0)?)
+                    })?;
+                    
+                    let mut seed_tags = Vec::new();
+                    for tag_row in tag_rows {
+                        seed_tags.push(tag_row?);
+                    }
+                    
+                    // Merge template with seed (seed overrides template)
+                    TemplateRepo::merge_attributes(
+                        &template,
+                        seed.project_id,
+                        seed.due_ts,
+                        seed.scheduled_ts,
+                        seed.wait_ts,
+                        seed.alloc_secs,
+                        &seed.udas,
+                        &seed_tags,
+                    )
+                } else {
+                    // Template not found - use seed attributes as-is
+                    let mut stmt = conn.prepare("SELECT tag FROM task_tags WHERE task_id = ?1")?;
+                    let tag_rows = stmt.query_map([seed.id.unwrap()], |row| {
+                        Ok(row.get::<_, String>(0)?)
+                    })?;
+                    
+                    let mut tags = Vec::new();
+                    for tag_row in tag_rows {
+                        tags.push(tag_row?);
+                    }
+                    (seed.project_id, seed.due_ts, seed.scheduled_ts, seed.wait_ts, seed.alloc_secs, seed.udas.clone(), tags)
+                }
+            } else {
+                // No template - use seed attributes as-is
+                let mut stmt = conn.prepare("SELECT tag FROM task_tags WHERE task_id = ?1")?;
+                let tag_rows = stmt.query_map([seed.id.unwrap()], |row| {
+                    Ok(row.get::<_, String>(0)?)
+                })?;
+                
+                let mut tags = Vec::new();
+                for tag_row in tag_rows {
+                    tags.push(tag_row?);
+                }
+                (seed.project_id, seed.due_ts, seed.scheduled_ts, seed.wait_ts, seed.alloc_secs, seed.udas.clone(), tags)
+            };
         
-        // Compute dates relative to occurrence
-        // For now, use seed's dates as-is (will be enhanced to evaluate relative dates)
-        let due_ts = seed.due_ts;
-        let scheduled_ts = seed.scheduled_ts;
-        let wait_ts = seed.wait_ts;
+        // TODO: Evaluate relative dates relative to occurrence_ts
+        // For now, dates are used as-is (relative date evaluation deferred)
         
-        // Create instance task (no recur field)
+        // Create instance task (no recur field, no template field)
         let instance = TaskRepo::create_full(
             conn,
             &seed.description,
-            seed.project_id,
-            due_ts,
-            scheduled_ts,
-            wait_ts,
-            seed.alloc_secs,
+            final_project_id,
+            final_due_ts,
+            final_scheduled_ts,
+            final_wait_ts,
+            final_alloc_secs,
             None, // No template field in instance
             None, // No recur field in instance
-            &seed.udas,
-            &[], // Tags will be handled separately
+            &final_udas,
+            &final_tags,
         )?;
         
         let instance_id = instance.id.unwrap();

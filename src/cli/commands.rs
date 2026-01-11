@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use crate::db::DbConnection;
-use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo};
+use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::utils::{parse_date_expr, parse_duration};
 use crate::filter::{parse_filter, filter_tasks};
@@ -474,19 +474,59 @@ fn handle_task_add(args: Vec<String>) -> Result<()> {
         None
     };
     
+    // Load template if specified and merge attributes
+    let (final_project_id, final_due_ts, final_scheduled_ts, final_wait_ts, final_alloc_secs, final_udas, final_tags) = 
+        if let Some(template_name) = &parsed.template {
+            // Load template
+            let template = TemplateRepo::get_by_name(&conn, template_name)?;
+            if let Some(tmpl) = template {
+                // Merge template with task attributes (task overrides template)
+                let (proj_id, due, scheduled, wait, alloc, udas, tags) = 
+                    TemplateRepo::merge_attributes(
+                        &tmpl,
+                        project_id,
+                        due_ts,
+                        scheduled_ts,
+                        wait_ts,
+                        alloc_secs,
+                        &parsed.udas,
+                        &parsed.tags_add,
+                    );
+                (proj_id, due, scheduled, wait, alloc, udas, tags)
+            } else {
+                // Template not found - create it from current task attributes
+                TemplateRepo::create_from_task(
+                    &conn,
+                    template_name,
+                    project_id,
+                    due_ts,
+                    scheduled_ts,
+                    wait_ts,
+                    alloc_secs,
+                    &parsed.udas,
+                    &parsed.tags_add,
+                )?;
+                // Use task attributes as-is
+                (project_id, due_ts, scheduled_ts, wait_ts, alloc_secs, parsed.udas, parsed.tags_add)
+            }
+        } else {
+            // No template - use task attributes as-is
+            (project_id, due_ts, scheduled_ts, wait_ts, alloc_secs, parsed.udas, parsed.tags_add)
+        };
+    
     // Create task
     let task = TaskRepo::create_full(
         &conn,
         &description,
-        project_id,
-        due_ts,
-        scheduled_ts,
-        wait_ts,
-        alloc_secs,
+        final_project_id,
+        final_due_ts,
+        final_scheduled_ts,
+        final_wait_ts,
+        final_alloc_secs,
         parsed.template,
         parsed.recur,
-        &parsed.udas,
-        &parsed.tags_add,
+        &final_udas,
+        &final_tags,
     )
     .context("Failed to create task")?;
     

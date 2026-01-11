@@ -293,10 +293,12 @@
 ## Phase 12: Templates
 
 ### 12.1 Template CRUD
-- [ ] Implement template storage
-- [ ] Implement template retrieval
-- [ ] Test: Template creation and retrieval
-- [ ] Note: Template management commands deferred (use via `--template` flag)
+- [x] Implement template storage
+- [x] Implement template retrieval
+- [x] Test: Template creation and retrieval
+- [x] Note: Template management commands deferred (use via `template:<name>` field token)
+- [x] Integrate templates into task creation (auto-create on use)
+- [x] Integrate templates into recurrence generation (attribute precedence)
 
 ---
 

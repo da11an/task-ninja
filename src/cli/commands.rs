@@ -3,6 +3,7 @@ use crate::db::DbConnection;
 use crate::repo::{ProjectRepo, TaskRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::utils::{parse_date_expr, parse_duration};
+use crate::filter::{parse_filter, filter_tasks};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
 
@@ -29,6 +30,9 @@ pub enum Commands {
     },
     /// List tasks
     List {
+        /// Filter arguments (e.g., "project:work +urgent")
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        filter: Vec<String>,
         /// Output in JSON format
         #[arg(long)]
         json: bool,
@@ -115,7 +119,7 @@ pub fn run() -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
         Commands::Add { args } => handle_task_add(args),
-        Commands::List { json } => handle_task_list(json),
+        Commands::List { filter, json } => handle_task_list(filter, json),
         Commands::Modify { id_or_filter, args, yes, interactive } => {
             handle_task_modify(id_or_filter, args, yes, interactive)
         }
@@ -279,12 +283,20 @@ fn handle_task_add(args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn handle_task_list(json: bool) -> Result<()> {
+fn handle_task_list(filter_args: Vec<String>, json: bool) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let tasks = TaskRepo::list_all(&conn)
-        .context("Failed to list tasks")?;
+    // Parse filter if provided
+    let tasks = if filter_args.is_empty() {
+        TaskRepo::list_all(&conn)
+            .context("Failed to list tasks")?
+    } else {
+        let filter_expr = parse_filter(filter_args)
+            .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+        filter_tasks(&conn, &filter_expr)
+            .context("Failed to filter tasks")?
+    };
     
     if tasks.is_empty() {
         println!("No tasks found.");

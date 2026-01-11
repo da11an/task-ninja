@@ -77,15 +77,16 @@
 ## Phase 3: Filtering & Querying
 
 ### 3.1 Filter Parser
-- [ ] Implement filter token parsing
-- [ ] Implement AND/OR/NOT logic
-- [ ] Implement precedence (not > and > or)
-- [ ] Test: Simple filters (`project:work`, `+urgent`)
-- [ ] Test: AND combinations
-- [ ] Test: OR combinations
-- [ ] Test: NOT combinations
-- [ ] Test: Complex expressions
-- [ ] Acceptance: Filter scenarios from Section 11.5
+- [x] Implement filter token parsing
+- [x] Implement AND/OR/NOT logic
+- [x] Implement precedence (not > and > or)
+- [x] Test: Simple filters (`project:work`, `+urgent`)
+- [x] Test: AND combinations
+- [x] Test: OR combinations
+- [x] Test: NOT combinations
+- [x] Test: Complex expressions
+- [x] Integration: Filter support in `task list` command
+- [ ] Acceptance: Filter scenarios from Section 11.5 (will add when more features complete)
 
 ### 3.2 Filter Terms Implementation
 - [ ] Implement `id:<n>` and bare numeric ID

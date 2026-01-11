@@ -1,64 +1,85 @@
-// Duration parsing (simplified for MVP)
-// Full implementation will come in Phase 9
+// Duration parsing - Full implementation
 
 use anyhow::{Context, Result};
 
 /// Parse a duration expression and return seconds
-/// For MVP, supports basic formats - full implementation in Phase 9
+/// Format: unit_spec+ where unit_spec = digits unit
+/// Units: d (days), h (hours), m (minutes), s (seconds)
+/// Ordering: must appear largest to smallest (d, h, m, s)
+/// Each unit type may appear at most once
 pub fn parse_duration(expr: &str) -> Result<i64> {
-    // Basic format: 30s, 10m, 2h, 1h30m
-    // For MVP, support simple formats
+    let expr = expr.trim();
+    
+    if expr.is_empty() {
+        anyhow::bail!("Duration cannot be empty");
+    }
+    
+    // Track which units we've seen and their order
+    let mut seen_units = Vec::new();
     let mut total_secs = 0i64;
     let mut remaining = expr;
     
-    // Parse units in order: d, h, m, s
+    // Unit order: d > h > m > s
+    let unit_order = ['d', 'h', 'm', 's'];
+    
     while !remaining.is_empty() {
         let mut found = false;
         
-        // Try days
-        if let Some(pos) = remaining.find('d') {
-            if let Ok(days) = remaining[..pos].parse::<i64>() {
-                total_secs += days * 86400;
+        // Try each unit in order
+        for &unit in &unit_order {
+            if let Some(pos) = remaining.find(unit) {
+                // Check if we've already seen this unit
+                if seen_units.contains(&unit) {
+                    anyhow::bail!("Unit '{}' appears multiple times in duration: {}", unit, expr);
+                }
+                
+                // Check ordering: must be after all previously seen units (largest to smallest)
+                // unit_order: ['d', 'h', 'm', 's'] with indices [0, 1, 2, 3]
+                // We want d > h > m > s, so current_idx should be > last_idx (going from larger to smaller)
+                if let Some(&last_unit) = seen_units.last() {
+                    let last_idx = unit_order.iter().position(|&u| u == last_unit).unwrap();
+                    let current_idx = unit_order.iter().position(|&u| u == unit).unwrap();
+                    if current_idx < last_idx {
+                        anyhow::bail!("Units must be in order (d, h, m, s): {}", expr);
+                    }
+                }
+                
+                // Parse the number
+                let num_str = &remaining[..pos];
+                if num_str.is_empty() {
+                    anyhow::bail!("Missing number before unit '{}' in duration: {}", unit, expr);
+                }
+                
+                let num = num_str.parse::<i64>()
+                    .map_err(|_| anyhow::anyhow!("Invalid number '{}' before unit '{}' in duration: {}", num_str, unit, expr))?;
+                
+                if num < 0 {
+                    anyhow::bail!("Duration values cannot be negative: {}", expr);
+                }
+                
+                // Add to total
+                match unit {
+                    'd' => total_secs += num * 86400,
+                    'h' => total_secs += num * 3600,
+                    'm' => total_secs += num * 60,
+                    's' => total_secs += num,
+                    _ => unreachable!(),
+                }
+                
+                seen_units.push(unit);
                 remaining = &remaining[pos + 1..];
                 found = true;
-            }
-        }
-        
-        // Try hours
-        if !found {
-            if let Some(pos) = remaining.find('h') {
-                if let Ok(hours) = remaining[..pos].parse::<i64>() {
-                    total_secs += hours * 3600;
-                    remaining = &remaining[pos + 1..];
-                    found = true;
-                }
-            }
-        }
-        
-        // Try minutes
-        if !found {
-            if let Some(pos) = remaining.find('m') {
-                if let Ok(mins) = remaining[..pos].parse::<i64>() {
-                    total_secs += mins * 60;
-                    remaining = &remaining[pos + 1..];
-                    found = true;
-                }
-            }
-        }
-        
-        // Try seconds
-        if !found {
-            if let Some(pos) = remaining.find('s') {
-                if let Ok(secs) = remaining[..pos].parse::<i64>() {
-                    total_secs += secs;
-                    remaining = &remaining[pos + 1..];
-                    found = true;
-                }
+                break;
             }
         }
         
         if !found {
-            anyhow::bail!("Invalid duration format: {}", expr);
+            // Check for invalid characters
+            if remaining.chars().next().unwrap().is_alphabetic() {
+                anyhow::bail!("Unknown unit in duration: {}", expr);
+            } else {
+                anyhow::bail!("Invalid duration format: {}", expr);
+            }
         }
     }
     

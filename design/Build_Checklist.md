@@ -227,28 +227,28 @@
 ## Phase 9: Date & Time Handling
 
 ### 9.1 Date Expression Parser
-- [ ] Implement absolute date parsing (`2026-01-10`, `2026-01-10T14:30`)
-- [ ] Implement relative date parsing (`today`, `tomorrow`, `+2d`, etc.)
-- [ ] Implement time-only parsing with 24-hour window rule
-- [ ] Test: All date expression forms
-- [ ] Test: Time-only resolution (8h past, 16h future window)
-- [ ] Test: "Twice as close" rule for time-only
+- [x] Implement absolute date parsing (`2026-01-10`, `2026-01-10T14:30`)
+- [x] Implement relative date parsing (`today`, `tomorrow`, `+2d`, etc.)
+- [x] Implement time-only parsing with 24-hour window rule
+- [x] Test: All date expression forms
+- [x] Test: Time-only resolution (8h past, 16h future window)
+- [x] Test: "Twice as close" rule for time-only
 
 ### 9.2 Timezone & DST Handling
-- [ ] Implement UTC storage (epoch seconds)
-- [ ] Implement local timezone parsing
-- [ ] Implement local timezone display
-- [ ] Implement DST fall back handling (first occurrence)
-- [ ] Implement DST spring forward handling (error on invalid)
-- [ ] Test: UTC storage consistency
-- [ ] Test: DST transition edge cases
-- [ ] Test: Timezone conversion accuracy
+- [x] Implement UTC storage (epoch seconds) - Already implemented via chrono
+- [x] Implement local timezone parsing - Already implemented via chrono Local
+- [x] Implement local timezone display - Already implemented via chrono Local
+- [x] Implement DST fall back handling (first occurrence) - Implemented in parse_local_datetime
+- [x] Implement DST spring forward handling (error on invalid) - Implemented in parse_local_datetime
+- [x] Test: UTC storage consistency - Verified via existing tests
+- [ ] Test: DST transition edge cases (requires specific timezone/DST setup)
+- [x] Test: Timezone conversion accuracy - Verified via existing tests
 
 ### 9.3 Duration Parser
-- [ ] Implement duration format parsing (`30s`, `1h30m`, etc.)
-- [ ] Implement unit ordering validation (largest to smallest)
-- [ ] Test: Valid duration formats
-- [ ] Test: Invalid duration formats (wrong order, spaces, etc.)
+- [x] Implement duration format parsing (`30s`, `1h30m`, etc.)
+- [x] Implement unit ordering validation (largest to smallest)
+- [x] Test: Valid duration formats
+- [x] Test: Invalid duration formats (wrong order, spaces, etc.)
 
 ---
 

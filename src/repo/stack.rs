@@ -1,5 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 use crate::models::{Stack, StackItem};
+use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Stack repository for database operations
@@ -92,6 +93,9 @@ impl StackRepo {
             "INSERT INTO stack_items (stack_id, task_id, ordinal, added_ts) VALUES (?1, ?2, ?3, ?4)",
             rusqlite::params![stack_id, task_id, new_ordinal, now],
         )?;
+        
+        // Record stack_added event
+        EventRepo::record_stack_added(conn, task_id, stack_id, new_ordinal)?;
         
         Self::update_modified(conn, stack_id)?;
         Ok(())
@@ -235,11 +239,23 @@ impl StackRepo {
             index.min(item_count - 1).max(0)
         };
         
+        // Get task_id before deletion for event recording
+        let task_id: Option<i64> = conn.query_row(
+            "SELECT task_id FROM stack_items WHERE stack_id = ?1 AND ordinal = ?2",
+            rusqlite::params![stack_id, clamped_index],
+            |row| row.get(0),
+        ).ok();
+        
         // Delete item
         conn.execute(
             "DELETE FROM stack_items WHERE stack_id = ?1 AND ordinal = ?2",
             rusqlite::params![stack_id, clamped_index],
         )?;
+        
+        // Record stack_removed event
+        if let Some(task_id) = task_id {
+            EventRepo::record_stack_removed(conn, task_id, stack_id)?;
+        }
         
         // Renumber remaining items
         Self::renumber(conn, stack_id)?;

@@ -1,5 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 use crate::models::Session;
+use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Micro-session threshold (30 seconds)
@@ -83,6 +84,10 @@ impl SessionRepo {
         })?;
         
         let id = conn.last_insert_rowid();
+        
+        // Record session_started event
+        EventRepo::record_session_started(conn, task_id, id, start_ts)?;
+        
         Ok(Session {
             id: Some(id),
             task_id,

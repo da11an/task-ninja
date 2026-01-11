@@ -255,15 +255,15 @@
 ## Phase 10: Task Events (Audit Log)
 
 ### 10.1 Event Recording
-- [ ] Implement event creation for all task changes
-- [ ] Implement event types (created, modified, status_changed, etc.)
-- [ ] Implement event payload JSON serialization
-- [ ] Test: Events recorded for all state changes
-- [ ] Test: Event immutability (never modified/deleted)
-- [ ] Test: Event payload structure
+- [x] Implement event creation for all task changes
+- [x] Implement event types (created, modified, status_changed, etc.)
+- [x] Implement event payload JSON serialization
+- [x] Test: Events recorded for all state changes
+- [x] Test: Event immutability (never modified/deleted)
+- [x] Test: Event payload structure
 
 ### 10.2 Event Queries (Future)
-- [ ] Note: Event querying deferred to future (analysis features)
+- [x] Note: Event querying deferred to future (analysis features)
 
 ---
 

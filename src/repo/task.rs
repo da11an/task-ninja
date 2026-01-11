@@ -1,5 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 use crate::models::Task;
+use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
@@ -70,7 +71,12 @@ impl TaskRepo {
                 "INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)",
                 rusqlite::params![id, tag],
             )?;
+            // Record tag_added event
+            EventRepo::record_tag_added(conn, id, tag)?;
         }
+        
+        // Record created event
+        EventRepo::record_created(conn, id, description, project_id)?;
         
         Ok(Task {
             id: Some(id),
@@ -212,39 +218,112 @@ impl TaskRepo {
         tags_to_add: &[String],
         tags_to_remove: &[String],
     ) -> Result<()> {
-        // Get current task
-        let mut task = Self::get_by_id(conn, task_id)?
+        // Get current task (for event recording)
+        let old_task = Self::get_by_id(conn, task_id)?
             .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
+        let mut task = old_task.clone();
         
         let now = chrono::Utc::now().timestamp();
         
         // Update description if provided
         if let Some(desc) = description {
+            if desc != task.description {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "description",
+                    Some(serde_json::Value::String(task.description.clone())),
+                    Some(serde_json::Value::String(desc.clone())),
+                )?;
+            }
             task.description = desc;
         }
         
         // Update project
         if let Some(proj_id) = project_id {
+            if proj_id != task.project_id {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "project_id",
+                    task.project_id.map(|id| serde_json::Value::Number(id.into())),
+                    proj_id.map(|id| serde_json::Value::Number(id.into())),
+                )?;
+            }
             task.project_id = proj_id;
         }
         
         // Update dates
         if let Some(due) = due_ts {
+            if due != task.due_ts {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "due_ts",
+                    task.due_ts.map(|ts| serde_json::Value::Number(ts.into())),
+                    due.map(|ts| serde_json::Value::Number(ts.into())),
+                )?;
+            }
             task.due_ts = due;
         }
         if let Some(scheduled) = scheduled_ts {
+            if scheduled != task.scheduled_ts {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "scheduled_ts",
+                    task.scheduled_ts.map(|ts| serde_json::Value::Number(ts.into())),
+                    scheduled.map(|ts| serde_json::Value::Number(ts.into())),
+                )?;
+            }
             task.scheduled_ts = scheduled;
         }
         if let Some(wait) = wait_ts {
+            if wait != task.wait_ts {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "wait_ts",
+                    task.wait_ts.map(|ts| serde_json::Value::Number(ts.into())),
+                    wait.map(|ts| serde_json::Value::Number(ts.into())),
+                )?;
+            }
             task.wait_ts = wait;
         }
         if let Some(alloc) = alloc_secs {
+            if alloc != task.alloc_secs {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "alloc_secs",
+                    task.alloc_secs.map(|ts| serde_json::Value::Number(ts.into())),
+                    alloc.map(|ts| serde_json::Value::Number(ts.into())),
+                )?;
+            }
             task.alloc_secs = alloc;
         }
         if let Some(tmpl) = template {
+            if tmpl != task.template {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "template",
+                    task.template.as_ref().map(|s| serde_json::Value::String(s.clone())),
+                    tmpl.as_ref().map(|s| serde_json::Value::String(s.clone())),
+                )?;
+            }
             task.template = tmpl;
         }
         if let Some(rec) = recur {
+            if rec != task.recur {
+                EventRepo::record_modified(
+                    conn,
+                    task_id,
+                    "recur",
+                    task.recur.as_ref().map(|s| serde_json::Value::String(s.clone())),
+                    rec.as_ref().map(|s| serde_json::Value::String(s.clone())),
+                )?;
+            }
             task.recur = rec;
         }
         
@@ -297,14 +376,26 @@ impl TaskRepo {
                     "INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)",
                     rusqlite::params![task_id, tag],
                 )?;
+                // Record tag_added event
+                EventRepo::record_tag_added(conn, task_id, tag)?;
             }
         }
         
         for tag in tags_to_remove {
-            conn.execute(
-                "DELETE FROM task_tags WHERE task_id = ?1 AND tag = ?2",
+            let existed: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_tags WHERE task_id = ?1 AND tag = ?2)",
                 rusqlite::params![task_id, tag],
+                |row| row.get(0),
             )?;
+            
+            if existed {
+                conn.execute(
+                    "DELETE FROM task_tags WHERE task_id = ?1 AND tag = ?2",
+                    rusqlite::params![task_id, tag],
+                )?;
+                // Record tag_removed event
+                EventRepo::record_tag_removed(conn, task_id, tag)?;
+            }
         }
         
         Ok(())
@@ -362,6 +453,11 @@ impl TaskRepo {
 
     /// Mark a task as completed
     pub fn complete(conn: &Connection, task_id: i64) -> Result<()> {
+        // Get current status for event recording
+        let old_task = Self::get_by_id(conn, task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
+        let old_status = old_task.status.as_str();
+        
         let now = chrono::Utc::now().timestamp();
         
         let rows_affected = conn.execute(
@@ -371,6 +467,11 @@ impl TaskRepo {
         
         if rows_affected == 0 {
             anyhow::bail!("Task {} not found", task_id);
+        }
+        
+        // Record status_changed event
+        if old_status != "completed" {
+            EventRepo::record_status_changed(conn, task_id, old_status, "completed")?;
         }
         
         Ok(())

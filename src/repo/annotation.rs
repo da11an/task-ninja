@@ -1,5 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 use crate::models::Annotation;
+use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Annotation repository for database operations
@@ -16,6 +17,10 @@ impl AnnotationRepo {
         )?;
         
         let id = conn.last_insert_rowid();
+        
+        // Record annotation_added event
+        EventRepo::record_annotation_added(conn, task_id, id, session_id)?;
+        
         Ok(Annotation {
             id: Some(id),
             task_id,
@@ -91,6 +96,9 @@ impl AnnotationRepo {
 
     /// Delete an annotation, verifying it belongs to the specified task
     pub fn delete_for_task(conn: &Connection, task_id: i64, annotation_id: i64) -> Result<()> {
+        // Record event before deletion
+        EventRepo::record_annotation_deleted(conn, task_id, annotation_id)?;
+        
         let rows_affected = conn.execute(
             "DELETE FROM task_annotations WHERE id = ?1 AND task_id = ?2",
             rusqlite::params![annotation_id, task_id],

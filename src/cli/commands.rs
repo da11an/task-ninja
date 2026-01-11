@@ -114,20 +114,42 @@ pub enum StackCommands {
     Pick {
         /// Stack position/index (0 = top, -1 = end)
         index: i32,
+        /// Ensure clock is running after operation
+        #[arg(long)]
+        clock_in: bool,
+        /// Ensure clock is stopped after operation
+        #[arg(long)]
+        clock_out: bool,
     },
     /// Rotate stack
     Roll {
         /// Number of positions to rotate (default: 1)
         #[arg(default_value = "1")]
         n: i32,
+        /// Ensure clock is running after operation
+        #[arg(long)]
+        clock_in: bool,
+        /// Ensure clock is stopped after operation
+        #[arg(long)]
+        clock_out: bool,
     },
     /// Remove task at position
     Drop {
         /// Stack position/index (0 = top, -1 = end)
         index: i32,
+        /// Ensure clock is running after operation
+        #[arg(long)]
+        clock_in: bool,
+        /// Ensure clock is stopped after operation
+        #[arg(long)]
+        clock_out: bool,
     },
     /// Clear all tasks from stack
-    Clear,
+    Clear {
+        /// Ensure clock is stopped after operation
+        #[arg(long)]
+        clock_out: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -603,55 +625,179 @@ fn handle_stack(cmd: StackCommands) -> Result<()> {
             }
             Ok(())
         }
-        StackCommands::Pick { index } => {
-            let stack = StackRepo::get_or_create_default(&conn)?;
-            StackRepo::pick(&conn, stack.id.unwrap(), index)
-                .context("Failed to pick task")?;
-            println!("Moved task at position {} to top", index);
-            Ok(())
+        StackCommands::Pick { index, clock_in, clock_out } => {
+            handle_stack_pick_with_clock(&conn, index, clock_in, clock_out)
         }
-        StackCommands::Roll { n } => {
-            let stack = StackRepo::get_or_create_default(&conn)?;
-            StackRepo::roll(&conn, stack.id.unwrap(), n)
-                .context("Failed to roll stack")?;
-            println!("Rotated stack by {} position(s)", n);
-            Ok(())
+        StackCommands::Roll { n, clock_in, clock_out } => {
+            handle_stack_roll_with_clock(&conn, n, clock_in, clock_out)
         }
-        StackCommands::Drop { index } => {
-            let stack = StackRepo::get_or_create_default(&conn)?;
-            StackRepo::drop(&conn, stack.id.unwrap(), index)
-                .context("Failed to drop task")?;
-            println!("Removed task at position {}", index);
-            Ok(())
+        StackCommands::Drop { index, clock_in, clock_out } => {
+            handle_stack_drop_with_clock(&conn, index, clock_in, clock_out)
         }
-        StackCommands::Clear => {
-            let stack = StackRepo::get_or_create_default(&conn)?;
-            StackRepo::clear(&conn, stack.id.unwrap())
-                .context("Failed to clear stack")?;
-            println!("Cleared stack");
-            Ok(())
+        StackCommands::Clear { clock_out } => {
+            handle_stack_clear_with_clock(&conn, clock_out)
         }
     }
+}
+
+/// Handle stack pick with clock state management
+fn handle_stack_pick_with_clock(conn: &Connection, index: i32, clock_in: bool, clock_out: bool) -> Result<()> {
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_id = stack.id.unwrap();
+    
+    // Get current stack state
+    let items_before = StackRepo::get_items(conn, stack_id)?;
+    let old_top_task = items_before.get(0).map(|item| item.task_id);
+    
+    // Perform the pick operation
+    StackRepo::pick(conn, stack_id, index)
+        .context("Failed to pick task")?;
+    
+    // Get new stack state
+    let items_after = StackRepo::get_items(conn, stack_id)?;
+    let new_top_task = items_after.get(0).map(|item| item.task_id);
+    
+    // Handle clock state
+    handle_stack_clock_state(conn, old_top_task, new_top_task, clock_in, clock_out)?;
+    
+    println!("Moved task at position {} to top", index);
+    Ok(())
+}
+
+/// Handle stack roll with clock state management
+fn handle_stack_roll_with_clock(conn: &Connection, n: i32, clock_in: bool, clock_out: bool) -> Result<()> {
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_id = stack.id.unwrap();
+    
+    // Get current stack state
+    let items_before = StackRepo::get_items(conn, stack_id)?;
+    let old_top_task = items_before.get(0).map(|item| item.task_id);
+    
+    // Perform the roll operation
+    StackRepo::roll(conn, stack_id, n)
+        .context("Failed to roll stack")?;
+    
+    // Get new stack state
+    let items_after = StackRepo::get_items(conn, stack_id)?;
+    let new_top_task = items_after.get(0).map(|item| item.task_id);
+    
+    // Handle clock state
+    handle_stack_clock_state(conn, old_top_task, new_top_task, clock_in, clock_out)?;
+    
+    println!("Rotated stack by {} position(s)", n);
+    Ok(())
+}
+
+/// Handle stack drop with clock state management
+fn handle_stack_drop_with_clock(conn: &Connection, index: i32, clock_in: bool, clock_out: bool) -> Result<()> {
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_id = stack.id.unwrap();
+    
+    // Get current stack state
+    let items_before = StackRepo::get_items(conn, stack_id)?;
+    let old_top_task = items_before.get(0).map(|item| item.task_id);
+    
+    // Perform the drop operation
+    StackRepo::drop(conn, stack_id, index)
+        .context("Failed to drop task")?;
+    
+    // Get new stack state
+    let items_after = StackRepo::get_items(conn, stack_id)?;
+    let new_top_task = items_after.get(0).map(|item| item.task_id);
+    
+    // Handle clock state
+    handle_stack_clock_state(conn, old_top_task, new_top_task, clock_in, clock_out)?;
+    
+    println!("Removed task at position {}", index);
+    Ok(())
+}
+
+/// Handle stack clear with clock state management
+fn handle_stack_clear_with_clock(conn: &Connection, clock_out: bool) -> Result<()> {
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_id = stack.id.unwrap();
+    
+    // Get current stack state
+    let items_before = StackRepo::get_items(conn, stack_id)?;
+    let old_top_task = items_before.get(0).map(|item| item.task_id);
+    
+    // Perform the clear operation
+    StackRepo::clear(conn, stack_id)
+        .context("Failed to clear stack")?;
+    
+    // Handle clock state (new top is None since stack is empty)
+    handle_stack_clock_state(conn, old_top_task, None, false, clock_out)?;
+    
+    println!("Cleared stack");
+    Ok(())
+}
+
+/// Handle clock state changes for stack operations
+/// Default behavior: if clock is running and stack[0] changes, close current session and start new one
+/// Flags: --clock_in ensures clock is running, --clock_out ensures clock is stopped
+fn handle_stack_clock_state(
+    conn: &Connection,
+    old_top_task: Option<i64>,
+    new_top_task: Option<i64>,
+    clock_in: bool,
+    clock_out: bool,
+) -> Result<()> {
+    let now = chrono::Utc::now().timestamp();
+    let open_session = SessionRepo::get_open(conn)?;
+    
+    // Handle --clock_out flag first (takes precedence)
+    if clock_out {
+        if let Some(_) = open_session {
+            SessionRepo::close_open(conn, now)
+                .context("Failed to close session")?;
+        }
+        return Ok(());
+    }
+    
+    // Handle --clock_in flag
+    if clock_in {
+        if let Some(task_id) = new_top_task {
+            // Close existing session if any
+            if let Some(_) = open_session {
+                SessionRepo::close_open(conn, now)
+                    .context("Failed to close existing session")?;
+            }
+            // Start new session for stack[0]
+            SessionRepo::create(conn, task_id, now)
+                .context("Failed to start session")?;
+        }
+        return Ok(());
+    }
+    
+    // Default behavior: if clock is running and stack[0] changed, switch sessions
+    if open_session.is_some() {
+        if old_top_task != new_top_task {
+            // Close current session
+            SessionRepo::close_open(conn, now)
+                .context("Failed to close session")?;
+            
+            // Start new session for new stack[0] if stack is not empty
+            if let Some(task_id) = new_top_task {
+                SessionRepo::create(conn, task_id, now)
+                    .context("Failed to start new session")?;
+            }
+        }
+    }
+    // If clock is not running, do nothing (stack operations don't create sessions)
+    
+    Ok(())
 }
 
 fn handle_stack_pick(index: i32) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
-    let stack = StackRepo::get_or_create_default(&conn)?;
-    StackRepo::pick(&conn, stack.id.unwrap(), index)
-        .context("Failed to pick task")?;
-    println!("Moved task at position {} to top", index);
-    Ok(())
+    handle_stack_pick_with_clock(&conn, index, false, false)
 }
 
 fn handle_stack_drop(index: i32) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
-    let stack = StackRepo::get_or_create_default(&conn)?;
-    StackRepo::drop(&conn, stack.id.unwrap(), index)
-        .context("Failed to drop task")?;
-    println!("Removed task at position {}", index);
-    Ok(())
+    handle_stack_drop_with_clock(&conn, index, false, false)
 }
 
 fn handle_task_enqueue(task_id_str: String) -> Result<()> {

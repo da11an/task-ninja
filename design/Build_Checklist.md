@@ -157,11 +157,11 @@
 - [ ] Acceptance: Interval scenarios from Section 11.2 (will add when acceptance test framework ready)
 
 ### 5.5 Stack Operations with Clock
-- [ ] Implement `--clock in` and `--clock out` flags
-- [ ] Implement stack operations affecting running sessions
-- [ ] Test: Stack roll while clock running switches live task
-- [ ] Test: Stack pick while stopped doesn't create sessions
-- [ ] Acceptance: Stack and clock coupling scenarios
+- [x] Implement `--clock in` and `--clock out` flags
+- [x] Implement stack operations affecting running sessions
+- [x] Test: Stack roll while clock running switches live task
+- [x] Test: Stack pick while stopped doesn't create sessions
+- [ ] Acceptance: Stack and clock coupling scenarios (will add when acceptance test framework ready)
 
 ---
 

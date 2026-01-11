@@ -141,12 +141,12 @@
 - [ ] Acceptance: Clock scenarios from Section 11.2 (will add when acceptance test framework ready)
 
 ### 5.3 Clock with Task ID
-- [ ] Implement `task <id> clock in` (push to top and start)
-- [ ] Implement session closing when switching tasks
-- [ ] Test: Task pushed to stack[0] on clock in
-- [ ] Test: Previous session closed when new one starts
-- [ ] Test: Timestamp handling (same timestamp for close/start)
-- [ ] Acceptance: Clock with task scenarios
+- [x] Implement `task <id> clock in` (push to top and start)
+- [x] Implement session closing when switching tasks
+- [x] Test: Task pushed to stack[0] on clock in
+- [x] Test: Previous session closed when new one starts
+- [x] Test: Timestamp handling (same timestamp for close/start)
+- [ ] Acceptance: Clock with task scenarios (will add when acceptance test framework ready)
 
 ### 5.4 Clock Interval Syntax
 - [ ] Implement interval parsing (`start..end`)

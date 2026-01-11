@@ -755,9 +755,47 @@ fn handle_clock_out(conn: &Connection, args: Vec<String>) -> Result<()> {
     Ok(())
 }
 
-fn handle_task_clock_in(_task_id_str: String, _args: Vec<String>) -> Result<()> {
-    // This will be implemented in Phase 5.3
-    // For now, just show an error
-    eprintln!("Error: task <id> clock in not yet implemented (Phase 5.3)");
-    std::process::exit(1);
+fn handle_task_clock_in(task_id_str: String, args: Vec<String>) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    // Parse task ID
+    let task_id: i64 = task_id_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid task ID: {}", task_id_str))?;
+    
+    // Check if task exists
+    if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
+        eprintln!("Error: Task {} not found", task_id);
+        std::process::exit(1);
+    }
+    
+    // Parse start time (defaults to "now")
+    let start_ts = if args.is_empty() {
+        chrono::Utc::now().timestamp()
+    } else {
+        let start_expr = args.join(" ");
+        parse_date_expr(&start_expr)
+            .context("Invalid start time expression")?
+    };
+    
+    // Check if session is already running
+    let existing_session = SessionRepo::get_open(&conn)?;
+    
+    // If session is running, close it at the effective start time
+    if existing_session.is_some() {
+        SessionRepo::close_open(&conn, start_ts)
+            .context("Failed to close existing session")?;
+    }
+    
+    // Push task to stack[0]
+    let stack = StackRepo::get_or_create_default(&conn)?;
+    StackRepo::push_to_top(&conn, stack.id.unwrap(), task_id)
+        .context("Failed to push task to stack")?;
+    
+    // Create new session for the task
+    SessionRepo::create(&conn, task_id, start_ts)
+        .context("Failed to start session")?;
+    
+    println!("Started timing task {}", task_id);
+    Ok(())
 }

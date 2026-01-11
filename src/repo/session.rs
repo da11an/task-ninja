@@ -2,15 +2,74 @@ use rusqlite::{Connection, OptionalExtension};
 use crate::models::Session;
 use anyhow::{Context, Result};
 
+/// Micro-session threshold (30 seconds)
+const MICRO_SECONDS: i64 = 30;
+
 /// Session repository for database operations
 pub struct SessionRepo;
 
 impl SessionRepo {
     /// Create a new session
     /// Returns error if a session is already open (enforced by unique constraint)
+    /// Applies micro-session merge/purge rules if applicable
     pub fn create(conn: &Connection, task_id: i64, start_ts: i64) -> Result<Session> {
         let now = chrono::Utc::now().timestamp();
         
+        // Check for recent micro-session that might need merge/purge
+        if let Some(micro_session) = Self::get_recent_micro_session(conn, start_ts)? {
+            let micro_end_ts = micro_session.end_ts.unwrap();
+            let time_since_micro_end = start_ts - micro_end_ts;
+            
+            // Check if within MICRO seconds of micro-session end
+            if time_since_micro_end >= 0 && time_since_micro_end <= MICRO_SECONDS {
+                if micro_session.task_id == task_id {
+                    // Merge: same task - merge micro-session into new session
+                    let new_session_id = {
+                        // Create the new session first
+                        conn.execute(
+                            "INSERT INTO sessions (task_id, start_ts, end_ts, created_ts) VALUES (?1, ?2, NULL, ?3)",
+                            rusqlite::params![task_id, start_ts, now],
+                        )
+                        .map_err(|e| {
+                            if e.to_string().contains("UNIQUE constraint") {
+                                anyhow::anyhow!("A session is already running. Please clock out first.")
+                            } else {
+                                anyhow::anyhow!("Failed to create session: {}", e)
+                            }
+                        })?;
+                        conn.last_insert_rowid()
+                    };
+                    
+                    // Merge: update new session to start at micro-session's start time
+                    Self::merge_micro_session(conn, &micro_session, new_session_id)?;
+                    
+                    println!("Merged micro-session (task {}, {}s) into new session (task {}, started at {}).", 
+                        micro_session.task_id, 
+                        micro_end_ts - micro_session.start_ts,
+                        task_id,
+                        micro_session.start_ts);
+                    
+                    return Ok(Session {
+                        id: Some(new_session_id),
+                        task_id,
+                        start_ts: micro_session.start_ts, // Merged start time
+                        end_ts: None,
+                        created_ts: now,
+                    });
+                } else {
+                    // Purge: different task - delete micro-session
+                    Self::purge_micro_session(conn, micro_session.id.unwrap())?;
+                    
+                    println!("Purged micro-session (task {}, {}s) - different task (task {}) started within {} seconds.", 
+                        micro_session.task_id,
+                        micro_end_ts - micro_session.start_ts,
+                        task_id,
+                        MICRO_SECONDS);
+                }
+            }
+        }
+        
+        // Normal session creation
         conn.execute(
             "INSERT INTO sessions (task_id, start_ts, end_ts, created_ts) VALUES (?1, ?2, NULL, ?3)",
             rusqlite::params![task_id, start_ts, now],
@@ -72,12 +131,14 @@ impl SessionRepo {
     }
 
     /// Close the currently open session
+    /// Returns the closed session and whether it was a micro-session
     pub fn close_open(conn: &Connection, end_ts: i64) -> Result<Option<Session>> {
         // Get the open session first
         let session_opt = Self::get_open(conn)?;
         
         if let Some(session) = session_opt {
             let session_id = session.id.unwrap();
+            let duration = end_ts - session.start_ts;
             
             // Update the session
             conn.execute(
@@ -85,17 +146,81 @@ impl SessionRepo {
                 rusqlite::params![end_ts, session_id],
             )?;
             
-            // Return the closed session
-            Ok(Some(Session {
+            let closed_session = Session {
                 id: Some(session_id),
                 task_id: session.task_id,
                 start_ts: session.start_ts,
                 end_ts: Some(end_ts),
                 created_ts: session.created_ts,
-            }))
+            };
+            
+            // Check if this is a micro-session and warn
+            if duration < MICRO_SECONDS {
+                eprintln!("Warning: Micro-session detected ({}s). This session may be merged or purged if another session starts within {} seconds.", duration, MICRO_SECONDS);
+            }
+            
+            // Return the closed session
+            Ok(Some(closed_session))
         } else {
             Ok(None)
         }
+    }
+    
+    /// Get the most recent micro-session (closed within MICRO seconds)
+    /// Returns the most recent closed session that ended within MICRO seconds of the given timestamp
+    pub fn get_recent_micro_session(conn: &Connection, before_ts: i64) -> Result<Option<Session>> {
+        // Look for sessions that ended within MICRO seconds before before_ts
+        let cutoff_ts = before_ts - MICRO_SECONDS;
+        
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, start_ts, end_ts, created_ts 
+             FROM sessions 
+             WHERE end_ts IS NOT NULL 
+             AND end_ts >= ?1 
+             AND end_ts <= ?2
+             AND (end_ts - start_ts) < ?3
+             ORDER BY end_ts DESC 
+             LIMIT 1"
+        )?;
+        
+        stmt.query_row(rusqlite::params![cutoff_ts, before_ts, MICRO_SECONDS], |row| {
+            Ok(Session {
+                id: Some(row.get(0)?),
+                task_id: row.get(1)?,
+                start_ts: row.get(2)?,
+                end_ts: Some(row.get(3)?),
+                created_ts: row.get(4)?,
+            })
+        })
+        .optional()
+        .context("Failed to query recent micro-session")
+    }
+    
+    /// Merge a micro-session into an adjacent session
+    /// The micro-session's start time becomes the start time of the adjacent session
+    pub fn merge_micro_session(conn: &Connection, micro_session: &Session, adjacent_session_id: i64) -> Result<()> {
+        // Update the adjacent session to start at the micro-session's start time
+        conn.execute(
+            "UPDATE sessions SET start_ts = ?1 WHERE id = ?2",
+            rusqlite::params![micro_session.start_ts, adjacent_session_id],
+        )?;
+        
+        // Delete the micro-session
+        conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            rusqlite::params![micro_session.id.unwrap()],
+        )?;
+        
+        Ok(())
+    }
+    
+    /// Purge (delete) a micro-session
+    pub fn purge_micro_session(conn: &Connection, micro_session_id: i64) -> Result<()> {
+        conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            rusqlite::params![micro_session_id],
+        )?;
+        Ok(())
     }
 
     /// Get all sessions for a task, ordered by start time (newest first)

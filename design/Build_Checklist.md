@@ -208,19 +208,19 @@
 ## Phase 8: Micro-Session Policy
 
 ### 8.1 Micro-Session Detection
-- [ ] Implement MICRO constant (30 seconds)
-- [ ] Implement micro-session detection (duration < MICRO)
-- [ ] Test: Micro-session identification
+- [x] Implement MICRO constant (30 seconds)
+- [x] Implement micro-session detection (duration < MICRO)
+- [x] Test: Micro-session identification
 
 ### 8.2 Merge/Purge Logic
-- [ ] Implement merge rule (same task, within MICRO of end)
-- [ ] Implement purge rule (different task, within MICRO of end)
-- [ ] Implement merge/purge application logic
-- [ ] Implement warning messages
-- [ ] Test: Merge on bounce back to same task
-- [ ] Test: Purge on rapid switch to different task
-- [ ] Test: Micro-session preserved if no rule triggers
-- [ ] Acceptance: Micro-session scenarios from Section 11.4
+- [x] Implement merge rule (same task, within MICRO of end)
+- [x] Implement purge rule (different task, within MICRO of end)
+- [x] Implement merge/purge application logic
+- [x] Implement warning messages
+- [x] Test: Merge on bounce back to same task
+- [x] Test: Purge on rapid switch to different task
+- [x] Test: Micro-session preserved if no rule triggers
+- [ ] Acceptance: Micro-session scenarios from Section 11.4 (will add when acceptance test framework ready)
 
 ---
 

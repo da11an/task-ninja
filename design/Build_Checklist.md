@@ -149,12 +149,12 @@
 - [ ] Acceptance: Clock with task scenarios (will add when acceptance test framework ready)
 
 ### 5.4 Clock Interval Syntax
-- [ ] Implement interval parsing (`start..end`)
-- [ ] Implement closed session creation
-- [ ] Implement overlap prevention (amend end time)
-- [ ] Test: Interval creates closed session
-- [ ] Test: Overlap prevention amends end time
-- [ ] Acceptance: Interval scenarios from Section 11.2
+- [x] Implement interval parsing (`start..end`)
+- [x] Implement closed session creation
+- [x] Implement overlap prevention (amend end time)
+- [x] Test: Interval creates closed session
+- [x] Test: Overlap prevention amends end time
+- [ ] Acceptance: Interval scenarios from Section 11.2 (will add when acceptance test framework ready)
 
 ### 5.5 Stack Operations with Clock
 - [ ] Implement `--clock in` and `--clock out` flags

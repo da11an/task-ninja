@@ -700,29 +700,60 @@ fn handle_clock_in(conn: &Connection, args: Vec<String>) -> Result<()> {
         std::process::exit(1);
     }
     
-    // Check if session is already running
-    if let Some(_) = SessionRepo::get_open(conn)? {
-        eprintln!("Error: A session is already running. Please clock out first.");
-        std::process::exit(1);
-    }
-    
     // Get stack[0] task
     let task_id = items[0].task_id;
     
-    // Parse start time (defaults to "now")
-    let start_ts = if args.is_empty() {
-        chrono::Utc::now().timestamp()
+    // Parse arguments - check for interval syntax (start..end)
+    let arg_str = args.join(" ");
+    if let Some(sep_pos) = arg_str.find("..") {
+        // Interval syntax: start..end (creates closed session)
+        let start_expr = arg_str[..sep_pos].trim();
+        let end_expr = arg_str[sep_pos + 2..].trim();
+        
+        let start_ts = if start_expr.is_empty() {
+            chrono::Utc::now().timestamp()
+        } else {
+            parse_date_expr(start_expr)
+                .context("Invalid start time expression")?
+        };
+        
+        let end_ts = parse_date_expr(end_expr)
+            .context("Invalid end time expression")?;
+        
+        // Check for overlap prevention
+        check_and_amend_overlaps(conn, start_ts)?;
+        
+        // Closed sessions don't conflict with open session constraint
+        // Create closed session
+        SessionRepo::create_closed(conn, task_id, start_ts, end_ts)
+            .context("Failed to create closed session")?;
+        
+        println!("Recorded session for task {} ({} to {})", task_id, start_ts, end_ts);
     } else {
-        let start_expr = args.join(" ");
-        parse_date_expr(&start_expr)
-            .context("Invalid start time expression")?
-    };
+        // Single start time or "now" (creates open session)
+        // Check if session is already running (only for open sessions)
+        if let Some(_) = SessionRepo::get_open(conn)? {
+            eprintln!("Error: A session is already running. Please clock out first.");
+            std::process::exit(1);
+        }
+        
+        let start_ts = if args.is_empty() {
+            chrono::Utc::now().timestamp()
+        } else {
+            parse_date_expr(&arg_str)
+                .context("Invalid start time expression")?
+        };
+        
+        // Check for overlap prevention
+        check_and_amend_overlaps(conn, start_ts)?;
+        
+        // Create open session
+        SessionRepo::create(conn, task_id, start_ts)
+            .context("Failed to start session")?;
+        
+        println!("Started timing task {}", task_id);
+    }
     
-    // Create session
-    SessionRepo::create(conn, task_id, start_ts)
-        .context("Failed to start session")?;
-    
-    println!("Started timing task {}", task_id);
     Ok(())
 }
 
@@ -769,13 +800,33 @@ fn handle_task_clock_in(task_id_str: String, args: Vec<String>) -> Result<()> {
         std::process::exit(1);
     }
     
-    // Parse start time (defaults to "now")
-    let start_ts = if args.is_empty() {
-        chrono::Utc::now().timestamp()
+    // Parse arguments - check for interval syntax (start..end)
+    let arg_str = args.join(" ");
+    let (start_ts, end_ts_opt) = if let Some(sep_pos) = arg_str.find("..") {
+        // Interval syntax: start..end
+        let start_expr = arg_str[..sep_pos].trim();
+        let end_expr = arg_str[sep_pos + 2..].trim();
+        
+        let start_ts = if start_expr.is_empty() {
+            chrono::Utc::now().timestamp()
+        } else {
+            parse_date_expr(start_expr)
+                .context("Invalid start time expression")?
+        };
+        
+        let end_ts = parse_date_expr(end_expr)
+            .context("Invalid end time expression")?;
+        
+        (start_ts, Some(end_ts))
     } else {
-        let start_expr = args.join(" ");
-        parse_date_expr(&start_expr)
-            .context("Invalid start time expression")?
+        // Single start time or "now"
+        let start_ts = if args.is_empty() {
+            chrono::Utc::now().timestamp()
+        } else {
+            parse_date_expr(&arg_str)
+                .context("Invalid start time expression")?
+        };
+        (start_ts, None)
     };
     
     // Check if session is already running
@@ -787,15 +838,43 @@ fn handle_task_clock_in(task_id_str: String, args: Vec<String>) -> Result<()> {
             .context("Failed to close existing session")?;
     }
     
+    // Check for overlap prevention (before creating new session)
+    check_and_amend_overlaps(&conn, start_ts)?;
+    
     // Push task to stack[0]
     let stack = StackRepo::get_or_create_default(&conn)?;
     StackRepo::push_to_top(&conn, stack.id.unwrap(), task_id)
         .context("Failed to push task to stack")?;
     
-    // Create new session for the task
-    SessionRepo::create(&conn, task_id, start_ts)
-        .context("Failed to start session")?;
+    // Create session (closed if interval, open otherwise)
+    if let Some(end_ts) = end_ts_opt {
+        SessionRepo::create_closed(&conn, task_id, start_ts, end_ts)
+            .context("Failed to create closed session")?;
+        println!("Recorded session for task {} ({} to {})", task_id, start_ts, end_ts);
+    } else {
+        SessionRepo::create(&conn, task_id, start_ts)
+            .context("Failed to start session")?;
+        println!("Started timing task {}", task_id);
+    }
     
-    println!("Started timing task {}", task_id);
+    Ok(())
+}
+
+/// Check for closed sessions that end after the given start time and amend them
+/// to prevent overlap
+fn check_and_amend_overlaps(conn: &Connection, new_start_ts: i64) -> Result<()> {
+    // Find closed sessions that end at or after the new start time
+    let recent_sessions = SessionRepo::get_recent_closed_after(conn, new_start_ts)?;
+    
+    for session in recent_sessions {
+        if let Some(end_ts) = session.end_ts {
+            // If the session ends after the new start time, amend it
+            if end_ts >= new_start_ts {
+                SessionRepo::amend_end_time(conn, session.id.unwrap(), new_start_ts)
+                    .context("Failed to amend session end time")?;
+            }
+        }
+    }
+    
     Ok(())
 }

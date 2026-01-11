@@ -359,4 +359,20 @@ impl TaskRepo {
         }
         Ok(tasks)
     }
+
+    /// Mark a task as completed
+    pub fn complete(conn: &Connection, task_id: i64) -> Result<()> {
+        let now = chrono::Utc::now().timestamp();
+        
+        let rows_affected = conn.execute(
+            "UPDATE tasks SET status = 'completed', modified_ts = ?1 WHERE id = ?2",
+            rusqlite::params![now, task_id],
+        )?;
+        
+        if rows_affected == 0 {
+            anyhow::bail!("Task {} not found", task_id);
+        }
+        
+        Ok(())
+    }
 }

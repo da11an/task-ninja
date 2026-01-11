@@ -183,15 +183,16 @@
 ## Phase 7: Done Command
 
 ### 7.1 Done with Single Task
-- [ ] Implement `task done` (shorthand for stack[0])
-- [ ] Implement `task <id> done`
-- [ ] Implement session closing on done
-- [ ] Implement task completion (status change)
-- [ ] Implement stack removal on done
-- [ ] Test: Done errors if stack empty
-- [ ] Test: Done errors if no session running
-- [ ] Test: Done completes task and removes from stack
-- [ ] Acceptance: Done semantics scenarios from Section 11.3
+- [x] Implement `task done` (shorthand for stack[0])
+- [x] Implement `task <id> done`
+- [x] Implement session closing on done
+- [x] Implement task completion (status change)
+- [x] Implement stack removal on done
+- [x] Test: Done errors if stack empty
+- [x] Test: Done errors if no session running
+- [x] Test: Done completes task and removes from stack
+- [x] Test: Done with --next starts next task
+- [ ] Acceptance: Done semantics scenarios from Section 11.3 (will add when acceptance test framework ready)
 
 ### 7.2 Done with Filter & Confirmation
 - [ ] Implement `task [<id|filter>] done` with filtering

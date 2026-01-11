@@ -9,46 +9,46 @@
 ## Phase 1: Foundation (Database & Core Infrastructure)
 
 ### 1.1 Database Schema & Migrations
-- [ ] Create database migration system
-- [ ] Implement initial schema (all tables from Section 9)
-- [ ] Add migration versioning/tracking
-- [ ] Test: migrations apply cleanly to empty database
-- [ ] Test: migrations are idempotent
-- [ ] Test: foreign key constraints work correctly
+- [x] Create database migration system
+- [x] Implement initial schema (all tables from Section 9)
+- [x] Add migration versioning/tracking
+- [x] Test: migrations apply cleanly to empty database
+- [x] Test: migrations are idempotent
+- [x] Test: foreign key constraints work correctly
 
 ### 1.2 Database Connection & Configuration
-- [ ] Implement configuration file parsing (`~/.taskninja/rc`)
-- [ ] Implement database location resolution (default + override)
-- [ ] Implement database connection management
-- [ ] Test: default location creates database at `~/.taskninja/tasks.db`
-- [ ] Test: configuration override works
-- [ ] Test: directory structure auto-creation
+- [x] Implement configuration file parsing (`~/.taskninja/rc`)
+- [x] Implement database location resolution (default + override)
+- [x] Implement database connection management
+- [x] Test: default location creates database at `~/.taskninja/tasks.db`
+- [x] Test: configuration override works
+- [x] Test: directory structure auto-creation
 
 ### 1.3 Core Data Models
-- [ ] Define Task model/struct
-- [ ] Define Project model/struct
-- [ ] Define Tag model/struct
-- [ ] Define Session model/struct
-- [ ] Define Stack model/struct
-- [ ] Define Annotation model/struct
-- [ ] Test: models serialize/deserialize correctly
-- [ ] Test: models validate constraints
+- [x] Define Task model/struct
+- [x] Define Project model/struct
+- [x] Define Tag model/struct (tags are stored in task_tags table, no separate model needed)
+- [x] Define Session model/struct
+- [x] Define Stack model/struct
+- [x] Define Annotation model/struct
+- [x] Test: models serialize/deserialize correctly
+- [x] Test: models validate constraints
 
 ---
 
 ## Phase 2: Basic CRUD Operations
 
 ### 2.1 Project CRUD
-- [ ] Implement `task projects add <name>`
-- [ ] Implement `task projects list [--archived]`
-- [ ] Implement `task projects rename <old> <new> [--force]`
-- [ ] Implement `task projects archive <name>`
-- [ ] Implement `task projects unarchive <name>`
-- [ ] Test: Project creation with unique names
-- [ ] Test: Nested project support (dot notation)
-- [ ] Test: Project merge with `--force`
-- [ ] Test: Archive/unarchive behavior
-- [ ] Acceptance: All project scenarios from Section 11.8
+- [x] Implement `task projects add <name>`
+- [x] Implement `task projects list [--archived]`
+- [x] Implement `task projects rename <old> <new> [--force]`
+- [x] Implement `task projects archive <name>`
+- [x] Implement `task projects unarchive <name>`
+- [x] Test: Project creation with unique names
+- [x] Test: Nested project support (dot notation)
+- [x] Test: Project merge with `--force`
+- [x] Test: Archive/unarchive behavior
+- [ ] Acceptance: All project scenarios from Section 11.8 (deferred - will add when acceptance test framework is ready)
 
 ### 2.2 Task CRUD (Basic)
 - [ ] Implement `task add` command

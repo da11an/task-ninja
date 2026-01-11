@@ -4,15 +4,57 @@ use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Micro-session threshold (30 seconds)
+/// Sessions shorter than this duration may be merged or purged based on subsequent activity
 const MICRO_SECONDS: i64 = 30;
 
 /// Session repository for database operations
+///
+/// Manages timing sessions for tasks, including:
+/// - Creating and closing sessions
+/// - Micro-session merge/purge rules
+/// - Querying session history
 pub struct SessionRepo;
 
 impl SessionRepo {
-    /// Create a new session
-    /// Returns error if a session is already open (enforced by unique constraint)
-    /// Applies micro-session merge/purge rules if applicable
+    /// Create a new open session for a task
+    ///
+    /// # Arguments
+    /// * `conn` - Database connection
+    /// * `task_id` - ID of the task to start timing
+    /// * `start_ts` - Start timestamp (Unix timestamp in UTC)
+    ///
+    /// # Returns
+    /// The created `Session` object
+    ///
+    /// # Errors
+    /// * Returns error if a session is already open (enforced by unique constraint)
+    /// * Applies micro-session merge/purge rules if applicable
+    ///
+    /// # Micro-Session Rules
+    ///
+    /// When creating a new session, the system checks for recent micro-sessions (closed sessions
+    /// shorter than 30 seconds that ended within the last 30 seconds):
+    ///
+    /// 1. **Merge**: If a micro-session exists for the same task, it is merged into the new session
+    ///    (the new session's start time is set to the micro-session's original start time)
+    ///
+    /// 2. **Purge**: If a micro-session exists for a different task, it is deleted
+    ///
+    /// 3. **Preserve**: If no micro-session exists or it's outside the 30-second window, the
+    ///    micro-session is preserved
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use task_ninja::db::DbConnection;
+    /// use task_ninja::repo::SessionRepo;
+    /// use chrono::Utc;
+    ///
+    /// let conn = DbConnection::connect().unwrap();
+    /// let task_id = 1;
+    /// let start_ts = Utc::now().timestamp();
+    /// let session = SessionRepo::create(&conn, task_id, start_ts).unwrap();
+    /// ```
     pub fn create(conn: &Connection, task_id: i64, start_ts: i64) -> Result<Session> {
         let now = chrono::Utc::now().timestamp();
         

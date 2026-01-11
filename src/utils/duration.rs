@@ -1,12 +1,42 @@
-// Duration parsing - Full implementation
+//! Duration parsing
+//!
+//! Parses duration expressions into seconds.
+//!
+//! # Format
+//!
+//! - Units: `d` (days), `h` (hours), `m` (minutes), `s` (seconds)
+//! - Ordering: Must appear largest to smallest (d, h, m, s)
+//! - Each unit type may appear at most once
+//!
+//! # Examples
+//!
+//! ```
+//! 1h       // 1 hour
+//! 2h30m    // 2 hours 30 minutes
+//! 1d2h     // 1 day 2 hours
+//! 30m      // 30 minutes
+//! 1h15m30s // 1 hour 15 minutes 30 seconds
+//! ```
 
 use anyhow::{Context, Result};
 
 /// Parse a duration expression and return seconds
-/// Format: unit_spec+ where unit_spec = digits unit
-/// Units: d (days), h (hours), m (minutes), s (seconds)
-/// Ordering: must appear largest to smallest (d, h, m, s)
-/// Each unit type may appear at most once
+///
+/// # Arguments
+/// * `expr` - Duration expression (e.g., "1h30m", "2d", "45s")
+///
+/// # Returns
+/// Duration in seconds as i64
+///
+/// # Examples
+///
+/// ```
+/// use task_ninja::utils::parse_duration;
+///
+/// assert_eq!(parse_duration("1h").unwrap(), 3600);
+/// assert_eq!(parse_duration("2h30m").unwrap(), 9000);
+/// assert_eq!(parse_duration("1d").unwrap(), 86400);
+/// ```
 pub fn parse_duration(expr: &str) -> Result<i64> {
     let expr = expr.trim();
     

@@ -1,4 +1,30 @@
-// Recurrence generation logic
+//! Recurrence generation logic
+//!
+//! Generates recurring task instances from seed tasks based on recurrence rules.
+//! The generation is idempotent - running multiple times produces the same results.
+//!
+//! # Algorithm
+//!
+//! 1. Find all seed tasks (tasks with `recur` field)
+//! 2. For each seed task:
+//!    - Parse the recurrence rule
+//!    - Generate occurrence timestamps up to the `until` date
+//!    - For each occurrence:
+//!      - Check if it already exists (via `recur_occurrences` table)
+//!      - If not, create a new task instance
+//!      - Record the occurrence in `recur_occurrences` table
+//!
+//! # Attribute Precedence
+//!
+//! When creating instances, attributes are merged in this order (highest to lowest priority):
+//! 1. Task-specific values (from seed task)
+//! 2. Template values (if template is specified)
+//! 3. Computed/default values
+//!
+//! # Idempotency
+//!
+//! The `recur_occurrences` table ensures idempotency by recording each generated occurrence.
+//! If a seed task and occurrence timestamp combination already exists, no new instance is created.
 
 use chrono::{DateTime, Datelike, Duration, TimeZone};
 use rusqlite::Connection;
@@ -9,11 +35,42 @@ use crate::models::Task;
 use std::collections::HashMap;
 
 /// Generate recurring task instances
+///
+/// # Example
+///
+/// ```no_run
+/// use task_ninja::db::DbConnection;
+/// use task_ninja::recur::RecurGenerator;
+/// use chrono::Utc;
+///
+/// let conn = DbConnection::connect().unwrap();
+/// let until_ts = (Utc::now() + chrono::Duration::days(30)).timestamp();
+/// let count = RecurGenerator::run(&conn, until_ts).unwrap();
+/// println!("Generated {} recurring task instances", count);
+/// ```
 pub struct RecurGenerator;
 
 impl RecurGenerator {
     /// Run recurrence generation for all seed tasks
-    /// until: timestamp (UTC) until which to generate occurrences
+    ///
+    /// # Arguments
+    /// * `conn` - Database connection
+    /// * `until_ts` - Unix timestamp (UTC) until which to generate occurrences
+    ///
+    /// # Returns
+    /// Number of new instances created
+    ///
+    /// # Example
+    ///
+    /// ```no_run
+    /// use task_ninja::db::DbConnection;
+    /// use task_ninja::recur::RecurGenerator;
+    /// use chrono::Utc;
+    ///
+    /// let conn = DbConnection::connect().unwrap();
+    /// let until_ts = (Utc::now() + chrono::Duration::days(30)).timestamp();
+    /// let count = RecurGenerator::run(&conn, until_ts).unwrap();
+    /// ```
     pub fn run(conn: &Connection, until_ts: i64) -> Result<usize> {
         let now = chrono::Utc::now().timestamp();
         

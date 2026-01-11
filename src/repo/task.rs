@@ -5,6 +5,24 @@ use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 /// Task repository for database operations
+///
+/// Provides CRUD operations for tasks, including:
+/// - Creating tasks with full attribute support
+/// - Querying and filtering tasks
+/// - Modifying task attributes
+/// - Completing tasks
+/// - Managing task tags and UDAs
+///
+/// # Example
+///
+/// ```no_run
+/// use task_ninja::db::DbConnection;
+/// use task_ninja::repo::TaskRepo;
+///
+/// let conn = DbConnection::connect().unwrap();
+/// let task = TaskRepo::create(&conn, "Fix bug", None).unwrap();
+/// println!("Created task {}", task.id.unwrap());
+/// ```
 pub struct TaskRepo;
 
 impl TaskRepo {

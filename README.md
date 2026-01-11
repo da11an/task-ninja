@@ -219,6 +219,46 @@ See the `design/` directory for complete specifications:
 - `Review_01_Design_Issues_and_Recommendations.md` - Design review and resolved issues
 - `Design_Decisions.md` - Implementation decisions log
 
+## Command Reference
+
+See `docs/COMMAND_REFERENCE.md` for complete command documentation with examples.
+
+## Troubleshooting
+
+### Common Issues
+
+**Error: Stack is empty**
+- Solution: Add a task to the stack first with `task <id> enqueue`
+
+**Error: No session is currently running**
+- Solution: Start a session with `task clock in` or `task <id> clock in`
+
+**Error: Task not found**
+- Solution: Verify task ID with `task list`
+
+**Error: Project not found**
+- Solution: Create project with `task projects add <name>`
+
+**Error: Filter parse error**
+- Solution: Check filter syntax, ensure proper spacing around `or` and `not`
+
+### Database Issues
+
+**Database location:**
+- Default: `~/.taskninja/tasks.db`
+- Override: Create `~/.taskninja/rc` with `data.location=/path/to/db`
+
+**Database corruption:**
+- Backup database regularly
+- If corruption occurs, restore from backup
+
+### Performance
+
+For large datasets (1000+ tasks):
+- Use specific filters to limit results
+- Indexes are automatically created for common queries
+- List operations should complete in < 1 second
+
 ## License
 
 MIT

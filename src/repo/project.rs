@@ -3,6 +3,29 @@ use crate::models::Project;
 use anyhow::{Context, Result};
 
 /// Project repository for database operations
+///
+/// Manages projects with support for:
+/// - Creating projects (including nested projects via dot notation)
+/// - Querying projects by name or ID
+/// - Renaming/merging projects
+/// - Archiving projects
+///
+/// # Nested Projects
+///
+/// Projects can be nested using dot notation (e.g., `admin.email`, `sales.northamerica`).
+/// The hierarchy is implicit - no explicit parent-child relationships are stored.
+/// Filtering by `project:admin` matches `admin`, `admin.email`, `admin.other`, etc.
+///
+/// # Example
+///
+/// ```no_run
+/// use task_ninja::db::DbConnection;
+/// use task_ninja::repo::ProjectRepo;
+///
+/// let conn = DbConnection::connect().unwrap();
+/// let project = ProjectRepo::create(&conn, "work").unwrap();
+/// let nested = ProjectRepo::create(&conn, "work.email").unwrap();
+/// ```
 pub struct ProjectRepo;
 
 impl ProjectRepo {

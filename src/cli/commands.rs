@@ -78,7 +78,7 @@ pub enum Commands {
     },
     /// Mark task(s) as done
     Done {
-        /// Task ID or filter (optional, defaults to stack[0])
+        /// Task ID or filter (optional, defaults to stack\[0\])
         id_or_filter: Option<String>,
         /// End time for session (date expression, defaults to now)
         #[arg(long)]
@@ -217,7 +217,7 @@ pub enum SessionsCommands {
 
 #[derive(Subcommand)]
 pub enum ClockCommands {
-    /// Start timing the current task (stack[0])
+    /// Start timing the current task (stack\[0\])
     In {
         /// Start time (date expression, defaults to "now")
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -1037,7 +1037,7 @@ fn handle_stack_clear_with_clock(conn: &Connection, clock_out: bool) -> Result<(
 }
 
 /// Handle clock state changes for stack operations (non-transactional version)
-/// Default behavior: if clock is running and stack[0] changes, close current session and start new one
+/// Default behavior: if clock is running and stack\[0\] changes, close current session and start new one
 /// Flags: --clock_in ensures clock is running, --clock_out ensures clock is stopped
 fn handle_stack_clock_state(
     conn: &Connection,
@@ -1050,7 +1050,8 @@ fn handle_stack_clock_state(
 }
 
 /// Handle clock state changes for stack operations (transactional version)
-/// This can be called from within a transaction
+/// This can be called from within a transaction.
+/// Default behavior: if clock is running and stack\[0\] changes, close current session and start new one
 fn handle_stack_clock_state_transactional(
     conn: &Connection,
     old_top_task: Option<i64>,

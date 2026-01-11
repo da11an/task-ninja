@@ -4,6 +4,28 @@ use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Stack repository for database operations
+///
+/// Manages the work queue (stack) with operations for:
+/// - Enqueueing tasks (add to end)
+/// - Pushing tasks to top (do it now)
+/// - Picking tasks from any position
+/// - Rolling/rotating the stack
+/// - Dropping tasks from stack
+/// - Clearing the stack
+///
+/// The default stack (name='default') is auto-created on first operation.
+///
+/// # Example
+///
+/// ```no_run
+/// use task_ninja::db::DbConnection;
+/// use task_ninja::repo::{StackRepo, TaskRepo};
+///
+/// let conn = DbConnection::connect().unwrap();
+/// let stack = StackRepo::get_or_create_default(&conn).unwrap();
+/// let task = TaskRepo::create(&conn, "New task", None).unwrap();
+/// StackRepo::enqueue(&conn, stack.id.unwrap(), task.id.unwrap()).unwrap();
+/// ```
 pub struct StackRepo;
 
 impl StackRepo {

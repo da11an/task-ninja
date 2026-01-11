@@ -1,10 +1,45 @@
-// Date expression parsing - Full implementation
+//! Date expression parsing
+//!
+//! Comprehensive date expression parser supporting:
+//! - Absolute dates: `2026-01-15`, `2026-01-15T09:00`
+//! - Relative dates: `today`, `tomorrow`, `+2d`, `-1w`
+//! - Time-only expressions: `09:00`, `17:30` (with 24-hour window rule)
+//! - End-of-period: `eod`, `eow`, `eom`
+//!
+//! # Time-Only Expression Rule
+//!
+//! Time-only expressions (e.g., `09:00`) resolve to the nearest occurrence:
+//! - Window: 8 hours in the past, 16 hours in the future
+//! - If future is no more than twice as close as past: use future
+//! - Otherwise: use nearest option
+//!
+//! # DST Handling
+//!
+//! - Dates are parsed in local timezone
+//! - Stored as UTC timestamps
+//! - Fall back hour (ambiguous): use first occurrence
+//! - Spring forward hour (invalid): error
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Datelike, Timelike};
 use anyhow::{Context, Result};
 
 /// Parse a date expression and return Unix timestamp (UTC)
-/// Supports absolute dates, relative dates, and time-only expressions
+///
+/// # Arguments
+/// * `expr` - Date expression string
+///
+/// # Returns
+/// Unix timestamp (UTC) as i64
+///
+/// # Examples
+///
+/// ```
+/// use task_ninja::utils::parse_date_expr;
+///
+/// let ts = parse_date_expr("2026-01-15").unwrap();
+/// let ts2 = parse_date_expr("tomorrow").unwrap();
+/// let ts3 = parse_date_expr("09:00").unwrap();
+/// ```
 pub fn parse_date_expr(expr: &str) -> Result<i64> {
     let expr_lower = expr.to_lowercase();
     

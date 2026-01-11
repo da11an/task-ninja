@@ -1,5 +1,23 @@
-// Filter expression evaluator
-// Evaluates filter expressions against tasks
+//! Filter expression evaluator
+//!
+//! Evaluates filter expressions against tasks to determine which tasks match the filter criteria.
+//!
+//! # Evaluation Process
+//!
+//! 1. Load all tasks from the database
+//! 2. For each task, evaluate the filter expression
+//! 3. Return tasks that match
+//!
+//! # Filter Terms
+//!
+//! - `id` - Match by task ID
+//! - `status:<status>` - Match by status (pending, completed, deleted)
+//! - `project:<name>` - Match by project (supports prefix matching for nested projects)
+//! - `+tag` / `-tag` - Match by tag presence/absence
+//! - `due:<expr>` - Match by due date
+//! - `scheduled:<expr>` - Match by scheduled date
+//! - `wait:<expr>` - Match by wait date
+//! - `waiting` - Derived: matches tasks with wait_ts in the future
 
 use crate::models::Task;
 use crate::repo::TaskRepo;

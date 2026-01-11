@@ -1,15 +1,53 @@
-// Filter parser for task queries
-// Implements boolean expression parsing with AND/OR/NOT
+//! Filter parser for task queries
+//!
+//! Implements boolean expression parsing with AND/OR/NOT operators.
+//!
+//! # Grammar
+//!
+//! ```
+//! filter := term | filter "or" term | "not" term
+//! term := id | status:<status> | project:<name> | +tag | -tag | due:<expr> | ...
+//! ```
+//!
+//! # Precedence
+//!
+//! 1. `not` (highest)
+//! 2. Implicit `and` (between adjacent terms)
+//! 3. `or` (lowest)
+//!
+//! # Examples
+//!
+//! ```
+//! // Implicit AND
+//! project:work +urgent
+//!
+//! // Explicit OR
+//! +urgent or +important
+//!
+//! // NOT
+//! not +waiting
+//!
+//! // Complex
+//! project:work +urgent or project:home +important
+//! ```
 
 use crate::filter::evaluator::FilterExpr;
 
 /// Parse filter tokens into a FilterExpr
-/// 
-/// Grammar:
-/// - Implicit AND between adjacent terms
-/// - Explicit OR with keyword `or`
-/// - Negation with keyword `not` applied to the following term
-/// - Precedence: `not` first, then implicit `and`, then `or`
+///
+/// # Arguments
+/// * `tokens` - Vector of filter tokens (e.g., `vec!["project:work".to_string(), "+urgent".to_string()]`)
+///
+/// # Returns
+/// `FilterExpr` representing the parsed filter, or an error string if parsing fails
+///
+/// # Example
+///
+/// ```
+/// use task_ninja::filter::parse_filter;
+///
+/// let filter = parse_filter(vec!["project:work".to_string(), "+urgent".to_string()]).unwrap();
+/// ```
 pub fn parse_filter(tokens: Vec<String>) -> Result<FilterExpr, String> {
     if tokens.is_empty() {
         return Ok(FilterExpr::All); // No filter = match all

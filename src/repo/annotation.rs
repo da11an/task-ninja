@@ -4,6 +4,34 @@ use crate::repo::EventRepo;
 use anyhow::{Context, Result};
 
 /// Annotation repository for database operations
+///
+/// Manages task annotations (timestamped notes) with support for:
+/// - Creating annotations linked to tasks
+/// - Linking annotations to sessions (optional)
+/// - Querying annotations by task or session
+/// - Deleting annotations
+///
+/// # Session Linking
+///
+/// Annotations can be linked to the session during which they were created.
+/// This allows tracking work notes during specific time periods.
+///
+/// # Example
+///
+/// ```no_run
+/// use task_ninja::db::DbConnection;
+/// use task_ninja::repo::AnnotationRepo;
+///
+/// let conn = DbConnection::connect().unwrap();
+/// let task_id = 1;
+/// let session_id = Some(5);
+/// let annotation = AnnotationRepo::create(
+///     &conn,
+///     task_id,
+///     "Found the bug".to_string(),
+///     session_id,
+/// ).unwrap();
+/// ```
 pub struct AnnotationRepo;
 
 impl AnnotationRepo {

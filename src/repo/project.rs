@@ -30,6 +30,26 @@ impl ProjectRepo {
         })
     }
 
+    /// Get project by ID
+    pub fn get_by_id(conn: &Connection, id: i64) -> Result<Option<Project>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, name, is_archived, created_ts, modified_ts 
+             FROM projects WHERE id = ?1"
+        )?;
+        
+        let project = stmt.query_row([id], |row| {
+            Ok(Project {
+                id: Some(row.get(0)?),
+                name: row.get(1)?,
+                is_archived: row.get::<_, i64>(2)? != 0,
+                created_ts: row.get(3)?,
+                modified_ts: row.get(4)?,
+            })
+        }).optional()?;
+        
+        Ok(project)
+    }
+    
     /// Get project by name
     pub fn get_by_name(conn: &Connection, name: &str) -> Result<Option<Project>> {
         let mut stmt = conn.prepare(

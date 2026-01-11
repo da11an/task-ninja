@@ -4,6 +4,7 @@ use crate::db::DbConnection;
 use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show};
+use crate::cli::output::{format_task_list_table, format_stack_display};
 use crate::utils::{parse_date_expr, parse_duration};
 use crate::filter::{parse_filter, filter_tasks};
 use crate::recur::RecurGenerator;
@@ -419,16 +420,30 @@ fn handle_projects(cmd: ProjectCommands) -> Result<()> {
                 .context("Failed to list projects")?;
             
             if json {
-                let json_output = serde_json::to_string_pretty(&projects)
-                    .context("Failed to serialize projects to JSON")?;
-                println!("{}", json_output);
+                // JSON output - enhanced schema
+                let json_projects: Vec<serde_json::Value> = projects.iter().map(|project| {
+                    serde_json::json!({
+                        "id": project.id,
+                        "name": project.name,
+                        "is_archived": project.is_archived,
+                        "created_ts": project.created_ts,
+                        "modified_ts": project.modified_ts,
+                    })
+                }).collect();
+                println!("{}", serde_json::to_string_pretty(&json_projects)?);
             } else {
+                // Human-readable table output
                 if projects.is_empty() {
                     println!("No projects found.");
                 } else {
+                    println!("{:<6} {:<40} {:<10}", "ID", "Name", "Status");
+                    println!("{}", "-".repeat(56));
                     for project in projects {
-                        let status = if project.is_archived { "[archived]" } else { "" };
-                        println!("{} {}", project.name, status);
+                        let status = if project.is_archived { "[archived]" } else { "[active]" };
+                        println!("{:<6} {:<40} {:<10}", 
+                            project.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()),
+                            project.name,
+                            status);
                     }
                 }
             }
@@ -630,23 +645,9 @@ fn handle_task_list(filter_args: Vec<String>, json: bool) -> Result<()> {
         }).collect();
         println!("{}", serde_json::to_string_pretty(&json_tasks)?);
     } else {
-        // Human-readable output
-        for (task, tags) in tasks {
-            let id = task.id.unwrap();
-            let mut parts = vec![format!("{}", id), task.description];
-            
-            if let Some(project_id) = task.project_id {
-                // TODO: Get project name (for now just show ID)
-                parts.push(format!("[project:{}]", project_id));
-            }
-            
-            if !tags.is_empty() {
-                let tag_str = tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" ");
-                parts.push(tag_str);
-            }
-            
-            println!("{}", parts.join(" "));
-        }
+        // Human-readable table output
+        let table = format_task_list_table(&conn, &tasks)?;
+        print!("{}", table);
     }
     
     Ok(())
@@ -802,21 +803,27 @@ fn handle_stack(cmd: StackCommands) -> Result<()> {
             let items = StackRepo::get_items(&conn, stack_id)?;
             
             if json {
+                // JSON output - enhanced schema
                 let json_items: Vec<serde_json::Value> = items.iter().enumerate().map(|(idx, item)| {
+                    // Get task description if available
+                    let task = TaskRepo::get_by_id(&conn, item.task_id).ok().flatten();
+                    let description = task.as_ref().map(|t| t.description.as_str());
+                    
                     serde_json::json!({
                         "index": idx,
                         "task_id": item.task_id,
+                        "task_description": description,
                         "ordinal": item.ordinal,
                     })
                 }).collect();
                 println!("{}", serde_json::to_string_pretty(&json_items)?);
             } else {
-                if items.is_empty() {
-                    println!("[]");
-                } else {
-                    let task_ids: Vec<String> = items.iter().map(|item| item.task_id.to_string()).collect();
-                    println!("[{}]", task_ids.join(","));
-                }
+                // Human-readable stack display
+                let stack_items: Vec<(i64, i32)> = items.iter()
+                    .map(|item| (item.task_id, item.ordinal))
+                    .collect();
+                let display = format_stack_display(&stack_items);
+                print!("{}", display);
             }
             Ok(())
         }
@@ -1092,7 +1099,10 @@ fn handle_clock_in(conn: &Connection, args: Vec<String>) -> Result<()> {
         SessionRepo::create(conn, task_id, start_ts)
             .context("Failed to start session")?;
         
-        println!("Started timing task {}", task_id);
+        // Get task description for better message
+        let task = TaskRepo::get_by_id(conn, task_id)?;
+        let desc = task.as_ref().map(|t| t.description.as_str()).unwrap_or("");
+        println!("Started timing task {}: {}", task_id, desc);
     }
     
     Ok(())
@@ -1121,7 +1131,10 @@ fn handle_clock_out(conn: &Connection, args: Vec<String>) -> Result<()> {
         .context("Failed to close session")?;
     
     if let Some(session) = closed {
-        println!("Stopped timing task {}", session.task_id);
+        // Get task description for better message
+        let task = TaskRepo::get_by_id(conn, session.task_id)?;
+        let desc = task.as_ref().map(|t| t.description.as_str()).unwrap_or("");
+        println!("Stopped timing task {}: {}", session.task_id, desc);
     }
     
     Ok(())
@@ -1195,7 +1208,10 @@ fn handle_task_clock_in(task_id_str: String, args: Vec<String>) -> Result<()> {
     } else {
         SessionRepo::create(&conn, task_id, start_ts)
             .context("Failed to start session")?;
-        println!("Started timing task {}", task_id);
+        // Get task description for better message
+        let task = TaskRepo::get_by_id(&conn, task_id)?;
+        let desc = task.as_ref().map(|t| t.description.as_str()).unwrap_or("");
+        println!("Started timing task {}: {}", task_id, desc);
     }
     
     Ok(())
@@ -1470,7 +1486,10 @@ fn handle_task_done(
             let next_task_id = items[0].task_id;
             SessionRepo::create(&conn, next_task_id, end_ts)
                 .context("Failed to start session for next task")?;
-            println!("Started timing task {}", next_task_id);
+            // Get task description for better message
+            let task = TaskRepo::get_by_id(&conn, next_task_id)?;
+            let desc = task.as_ref().map(|t| t.description.as_str()).unwrap_or("");
+            println!("Started timing task {}: {}", next_task_id, desc);
         }
     }
     

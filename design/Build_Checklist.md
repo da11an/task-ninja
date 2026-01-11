@@ -318,20 +318,20 @@
 ## Phase 14: Output & Formatting
 
 ### 14.1 Human-Readable Output
-- [ ] Implement table formatting for `list` commands
-- [ ] Implement stack display formatting
-- [ ] Implement clock transition messages
-- [ ] Test: Output formatting consistency
-- [ ] Test: Column alignment and readability
+- [x] Implement table formatting for `list` commands
+- [x] Implement stack display formatting
+- [x] Implement clock transition messages
+- [x] Test: Output formatting consistency
+- [x] Test: Column alignment and readability
 
 ### 14.2 JSON Output
-- [ ] Implement `--json` flag support
-- [ ] Implement JSON schema for tasks
-- [ ] Implement JSON schema for projects
-- [ ] Implement JSON schema for stack
-- [ ] Implement JSON schema for sessions
-- [ ] Test: JSON output validity
-- [ ] Test: JSON schema consistency
+- [x] Implement `--json` flag support
+- [x] Implement JSON schema for tasks
+- [x] Implement JSON schema for projects
+- [x] Implement JSON schema for stack
+- [x] Implement JSON schema for sessions
+- [x] Test: JSON output validity
+- [x] Test: JSON schema consistency
 
 ---
 

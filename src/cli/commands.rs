@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use crate::db::DbConnection;
-use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo};
+use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::utils::{parse_date_expr, parse_duration};
 use crate::filter::{parse_filter, filter_tasks};
@@ -61,6 +61,15 @@ pub enum Commands {
     Clock {
         #[command(subcommand)]
         subcommand: ClockCommands,
+    },
+    /// Annotate a task
+    Annotate {
+        /// Annotation note text
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        note: Vec<String>,
+        /// Delete annotation by ID
+        #[arg(long)]
+        delete: Option<String>,
     },
 }
 
@@ -172,6 +181,26 @@ pub fn run() -> Result<()> {
     // Get raw args to handle special syntax patterns
     let args: Vec<String> = std::env::args().skip(1).collect();
     
+    // Check if this is task <id> annotate pattern
+    if args.len() >= 2 {
+        if let Some(annotate_pos) = args.iter().position(|a| a == "annotate") {
+            if annotate_pos > 0 {
+                // We have task <id> annotate
+                let task_id = args[0].clone();
+                let note_args = args[annotate_pos + 1..].to_vec();
+                // Check for --delete flag
+                if let Some(delete_pos) = note_args.iter().position(|a| a == "--delete") {
+                    if delete_pos + 1 < note_args.len() {
+                        let annotation_id = note_args[delete_pos + 1].clone();
+                        return handle_annotation_delete(task_id, annotation_id);
+                    }
+                } else {
+                    return handle_annotation_add(Some(task_id), note_args);
+                }
+            }
+        }
+    }
+    
     // Check if this is task <id> clock in pattern
     if args.len() >= 3 {
         if let Some(clock_pos) = args.iter().position(|a| a == "clock") {
@@ -238,6 +267,14 @@ pub fn run() -> Result<()> {
         }
         Commands::Stack { subcommand } => handle_stack(subcommand),
         Commands::Clock { subcommand } => handle_clock(subcommand),
+        Commands::Annotate { note, delete } => {
+            if let Some(annotation_id) = delete {
+                eprintln!("Error: Task ID required when deleting annotation. Use: task <id> annotate --delete <annotation_id>");
+                std::process::exit(1);
+            } else {
+                handle_annotation_add(None, note)
+            }
+        }
     }
 }
 
@@ -1022,5 +1059,83 @@ fn check_and_amend_overlaps(conn: &Connection, new_start_ts: i64) -> Result<()> 
         }
     }
     
+    Ok(())
+}
+
+fn handle_annotation_add(task_id_opt: Option<String>, note_args: Vec<String>) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    if note_args.is_empty() {
+        eprintln!("Error: Annotation note cannot be empty");
+        std::process::exit(1);
+    }
+    
+    let note = note_args.join(" ");
+    
+    // Determine task ID
+    let task_id = if let Some(tid_str) = task_id_opt {
+        // Task ID provided
+        tid_str.parse::<i64>()
+            .map_err(|_| anyhow::anyhow!("Invalid task ID: {}", tid_str))?
+    } else {
+        // No task ID - check if clocked in
+        let open_session = SessionRepo::get_open(&conn)?;
+        if let Some(session) = open_session {
+            session.task_id
+        } else {
+            eprintln!("Error: No task ID provided and no session is running. Please specify a task ID or clock in first.");
+            std::process::exit(1);
+        }
+    };
+    
+    // Check if task exists
+    if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
+        eprintln!("Error: Task {} not found", task_id);
+        std::process::exit(1);
+    }
+    
+    // Get current session if running (for session linking)
+    let open_session = SessionRepo::get_open(&conn)?;
+    let session_id = if let Some(session) = open_session {
+        // Only link if the session is for the same task
+        if session.task_id == task_id {
+            session.id
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    
+    // Create annotation
+    let annotation = AnnotationRepo::create(&conn, task_id, note, session_id)
+        .context("Failed to create annotation")?;
+    
+    println!("Added annotation {} to task {}", annotation.id.unwrap(), task_id);
+    Ok(())
+}
+
+fn handle_annotation_delete(task_id_str: String, annotation_id_str: String) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    let task_id: i64 = task_id_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid task ID: {}", task_id_str))?;
+    
+    let annotation_id: i64 = annotation_id_str.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid annotation ID: {}", annotation_id_str))?;
+    
+    // Check if task exists
+    if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
+        eprintln!("Error: Task {} not found", task_id);
+        std::process::exit(1);
+    }
+    
+    // Delete annotation (verifies it belongs to the task)
+    AnnotationRepo::delete_for_task(&conn, task_id, annotation_id)
+        .context("Failed to delete annotation")?;
+    
+    println!("Deleted annotation {} from task {}", annotation_id, task_id);
     Ok(())
 }

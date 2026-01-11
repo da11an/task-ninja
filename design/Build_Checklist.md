@@ -168,15 +168,15 @@
 ## Phase 6: Annotations
 
 ### 6.1 Annotation CRUD
-- [ ] Implement `task [<id>] annotate <note...>`
-- [ ] Implement annotation without ID (when clocked in)
-- [ ] Implement session linking (session_id in annotations)
-- [ ] Implement `task <id> annotate --delete <annotation_id>`
-- [ ] Test: Annotation creation with task ID
-- [ ] Test: Annotation creation without ID (when clocked in)
-- [ ] Test: Session linking when created during session
-- [ ] Test: Annotation deletion
-- [ ] Acceptance: Annotation scenarios
+- [x] Implement `task [<id>] annotate <note...>`
+- [x] Implement annotation without ID (when clocked in)
+- [x] Implement session linking (session_id in annotations)
+- [x] Implement `task <id> annotate --delete <annotation_id>`
+- [x] Test: Annotation creation with task ID
+- [x] Test: Annotation creation without ID (when clocked in)
+- [x] Test: Session linking when created during session
+- [x] Test: Annotation deletion
+- [ ] Acceptance: Annotation scenarios (will add when acceptance test framework ready)
 
 ---
 

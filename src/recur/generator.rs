@@ -104,21 +104,42 @@ impl RecurGenerator {
         let end_dt = DateTime::<chrono::Utc>::from_timestamp(end_ts, 0)
             .ok_or_else(|| anyhow::anyhow!("Invalid end timestamp"))?;
         
-        let mut current = start_dt;
+        // For patterns with weekday/monthday filters, we need to check each day
+        // For simple patterns, we can advance by the frequency interval
+        let needs_daily_check = rule.byweekday.is_some() || rule.bymonthday.is_some();
         
-        // Generate occurrences based on frequency
-        while current <= end_dt {
-            let current_ts = current.timestamp();
+        if needs_daily_check {
+            // Check each day in the range
+            let mut current = start_dt.date_naive().and_hms_opt(0, 0, 0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid date"))?;
+            let end_date = end_dt.date_naive();
             
-            // Check if this occurrence matches the rule
-            if Self::matches_rule(rule, &current)? {
+            while current.date() <= end_date {
+                let current_dt = DateTime::<chrono::Utc>::from_utc(current, chrono::Utc);
+                let current_ts = current_dt.timestamp();
+                
+                if current_ts > start_ts && current_ts <= end_ts {
+                    if Self::matches_rule(rule, &current_dt)? {
+                        occurrences.push(current_ts);
+                    }
+                }
+                
+                current = current + Duration::days(1);
+            }
+        } else {
+            // Simple pattern - advance by frequency interval
+            let mut current = start_dt;
+            
+            while current <= end_dt {
+                let current_ts = current.timestamp();
+                
                 if current_ts > start_ts && current_ts <= end_ts {
                     occurrences.push(current_ts);
                 }
+                
+                // Advance to next potential occurrence
+                current = Self::next_occurrence(rule, &current)?;
             }
-            
-            // Advance to next potential occurrence
-            current = Self::next_occurrence(rule, &current)?;
         }
         
         Ok(occurrences)

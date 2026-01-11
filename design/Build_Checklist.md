@@ -270,23 +270,23 @@
 ## Phase 11: Recurrence
 
 ### 11.1 Recurrence Rule Parser
-- [ ] Implement grammar parser for recurrence rules
-- [ ] Implement simple frequencies (`daily`, `weekly`, `monthly`, `yearly`)
-- [ ] Implement interval frequencies (`every:Nd`, `every:Nw`, etc.)
-- [ ] Implement weekday modifier (`byweekday:`)
-- [ ] Implement day-of-month modifier (`bymonthday:`)
-- [ ] Test: All recurrence rule formats
-- [ ] Test: Modifier validation (compatibility with frequency)
+- [x] Implement grammar parser for recurrence rules
+- [x] Implement simple frequencies (`daily`, `weekly`, `monthly`, `yearly`)
+- [x] Implement interval frequencies (`every:Nd`, `every:Nw`, etc.)
+- [x] Implement weekday modifier (`byweekday:`)
+- [x] Implement day-of-month modifier (`bymonthday:`)
+- [x] Test: All recurrence rule formats
+- [x] Test: Modifier validation (compatibility with frequency)
 
 ### 11.2 Recurrence Generation
-- [ ] Implement `task recur run [--until <date_expr>]`
-- [ ] Implement occurrence generation logic
-- [ ] Implement idempotency (recur_occurrences table)
-- [ ] Implement attribute precedence (template → seed → computed dates)
-- [ ] Test: Idempotent generation (no duplicates)
-- [ ] Test: Attribute precedence
-- [ ] Test: Date computation relative to occurrence
-- [ ] Acceptance: Recurrence scenarios from Section 11.7
+- [x] Implement `task recur run [--until <date_expr>]`
+- [x] Implement occurrence generation logic
+- [x] Implement idempotency (recur_occurrences table)
+- [ ] Implement attribute precedence (template → seed → computed dates) - Template support deferred to Phase 12
+- [x] Test: Idempotent generation (no duplicates)
+- [ ] Test: Attribute precedence - Deferred (requires templates)
+- [ ] Test: Date computation relative to occurrence - Basic implementation (dates copied as-is, relative date evaluation deferred)
+- [ ] Acceptance: Recurrence scenarios from Section 11.7 - Basic scenarios tested
 
 ---
 

@@ -361,15 +361,15 @@
 - [x] Test: Test framework works correctly
 
 ### 16.2 Acceptance Test Implementation
-- [ ] Implement all acceptance tests from Section 11
-- [ ] Test: Stack basics (Section 11.1)
-- [ ] Test: Clock and stack coupling (Section 11.2)
-- [ ] Test: Done semantics (Section 11.3)
-- [ ] Test: Micro-session behavior (Section 11.4)
-- [ ] Test: Tags and filters (Section 11.5)
-- [ ] Test: Scheduling and waiting (Section 11.6)
-- [ ] Test: Recurrence (Section 11.7)
-- [ ] Test: Projects (Section 11.8)
+- [x] Implement all acceptance tests from Section 11
+- [x] Test: Stack basics (Section 11.1)
+- [x] Test: Clock and stack coupling (Section 11.2)
+- [x] Test: Done semantics (Section 11.3)
+- [x] Test: Micro-session behavior (Section 11.4)
+- [x] Test: Tags and filters (Section 11.5)
+- [x] Test: Scheduling and waiting (Section 11.6)
+- [x] Test: Recurrence (Section 11.7)
+- [x] Test: Projects (Section 11.8)
 
 ### 16.3 End-to-End Testing
 - [ ] Test: Complete workflows (add → clock in → annotate → done)

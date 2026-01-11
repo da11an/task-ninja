@@ -377,8 +377,16 @@ impl<'a> ThenBuilder<'a> {
 /// Helper function to parse time strings like "09:00" or "2026-01-10T09:00"
 fn parse_time(time_str: &str) -> i64 {
     if time_str.contains('T') {
-        // Full datetime: "2026-01-10T09:00"
-        task_ninja::utils::parse_date_expr(time_str).unwrap()
+        // Full datetime: "2026-01-10T09:00" or "2026-01-10T09:00:00"
+        // Remove seconds if present
+        let normalized = if time_str.matches(':').count() == 3 {
+            // Has seconds, remove them
+            let parts: Vec<&str> = time_str.split(':').collect();
+            format!("{}:{}", parts[0], parts[1])
+        } else {
+            time_str.to_string()
+        };
+        task_ninja::utils::parse_date_expr(&normalized).unwrap()
     } else if time_str.contains(':') {
         // Time only: "09:00" - assume today
         let today = Local::now().date_naive();

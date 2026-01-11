@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::db::DbConnection;
 use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo};
 use crate::cli::parser::{parse_task_args, join_description};
-use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show};
+use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter};
 use crate::cli::output::{format_task_list_table, format_stack_display};
 use crate::cli::error::{user_error, internal_error, validate_task_id, validate_stack_index, validate_project_name, validate_tag, validate_uda_key, validate_template_name};
 use crate::utils::{parse_date_expr, parse_duration};
@@ -255,21 +255,30 @@ pub fn run() -> Result<()> {
         }
     }
     
-    // Check if this is task <id> annotate pattern
+    // Check if this is task <id|filter> annotate pattern
     if args.len() >= 2 {
         if let Some(annotate_pos) = args.iter().position(|a| a == "annotate") {
             if annotate_pos > 0 {
-                // We have task <id> annotate
-                let task_id = args[0].clone();
+                // We have task <id|filter> annotate
+                let id_or_filter = args[0].clone();
                 let note_args = args[annotate_pos + 1..].to_vec();
                 // Check for --delete flag
                 if let Some(delete_pos) = note_args.iter().position(|a| a == "--delete") {
                     if delete_pos + 1 < note_args.len() {
                         let annotation_id = note_args[delete_pos + 1].clone();
-                        return handle_annotation_delete(task_id, annotation_id);
+                        // Delete only works with task ID, not filter
+                        return handle_annotation_delete(id_or_filter, annotation_id);
                     }
                 } else {
-                    return handle_annotation_add(Some(task_id), note_args);
+                    // Parse flags
+                    let yes = note_args.contains(&"--yes".to_string());
+                    let interactive = note_args.contains(&"--interactive".to_string());
+                    // Filter out flags from note args
+                    let note_args_filtered: Vec<String> = note_args.iter()
+                        .filter(|a| a != &&"--yes".to_string() && a != &&"--interactive".to_string())
+                        .cloned()
+                        .collect();
+                    return handle_annotation_add_with_filter(id_or_filter, note_args_filtered, yes, interactive);
                 }
             }
         }
@@ -296,6 +305,19 @@ pub fn run() -> Result<()> {
                 // We have task <id> enqueue
                 let task_id = args[0].clone();
                 return handle_task_enqueue(task_id);
+            }
+        }
+    }
+    
+    // Check if this is task <id|filter> list pattern
+    if args.len() >= 2 {
+        if let Some(list_pos) = args.iter().position(|a| a == "list") {
+            if list_pos > 0 {
+                // We have task <filter> list
+                let filter_args = args[0..list_pos].to_vec();
+                let list_args = args[list_pos + 1..].to_vec();
+                let json = list_args.contains(&"--json".to_string());
+                return handle_task_list(filter_args, json);
             }
         }
     }
@@ -329,34 +351,34 @@ pub fn run() -> Result<()> {
         }
     }
     
-    // Check if this is task [<id>] sessions pattern
+    // Check if this is task [<id|filter>] sessions pattern
     if args.len() >= 2 {
         if let Some(sessions_pos) = args.iter().position(|a| a == "sessions") {
             if sessions_pos > 0 {
-                // We have task <id> sessions
-                let task_id_str = args[0].clone();
+                // We have task <id|filter> sessions
+                let id_or_filter = args[0].clone();
                 let sessions_args = args[sessions_pos + 1..].to_vec();
                 
                 // Parse subcommand
                 if let Some(subcmd) = sessions_args.first() {
                     if subcmd == "list" {
                         let json = sessions_args.contains(&"--json".to_string());
-                        return handle_task_sessions_list(Some(task_id_str), json);
+                        return handle_task_sessions_list_with_filter(Some(id_or_filter), json);
                     } else if subcmd == "show" {
-                        return handle_task_sessions_show(Some(task_id_str));
+                        return handle_task_sessions_show_with_filter(Some(id_or_filter));
                     }
                 }
             } else if sessions_pos == 0 {
-                // We have task sessions (no ID)
+                // We have task sessions (no ID/filter)
                 let sessions_args = args[sessions_pos + 1..].to_vec();
                 
                 // Parse subcommand
                 if let Some(subcmd) = sessions_args.first() {
                     if subcmd == "list" {
                         let json = sessions_args.contains(&"--json".to_string());
-                        return handle_task_sessions_list(None, json);
+                        return handle_task_sessions_list_with_filter(None, json);
                     } else if subcmd == "show" {
-                        return handle_task_sessions_show(None);
+                        return handle_task_sessions_show_with_filter(None);
                     }
                 }
             }
@@ -1414,6 +1436,130 @@ fn handle_annotation_add(task_id_opt: Option<String>, note_args: Vec<String>) ->
         .context("Failed to create annotation")?;
     
     println!("Added annotation {} to task {}", annotation.id.unwrap(), task_id);
+    Ok(())
+}
+
+/// Handle annotation with filter support (multi-task annotation)
+fn handle_annotation_add_with_filter(id_or_filter: String, note_args: Vec<String>, yes: bool, interactive: bool) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    if note_args.is_empty() {
+        user_error("Annotation note cannot be empty");
+    }
+    
+    let note = note_args.join(" ");
+    
+    // Try to parse as task ID first, otherwise treat as filter
+    let task_ids: Vec<i64> = match validate_task_id(&id_or_filter) {
+        Ok(id) => {
+            // Single task ID
+            if TaskRepo::get_by_id(&conn, id)?.is_none() {
+                user_error(&format!("Task {} not found", id));
+            }
+            vec![id]
+        }
+        Err(_) => {
+            // Treat as filter
+            let filter_expr = match parse_filter(vec![id_or_filter]) {
+                Ok(expr) => expr,
+                Err(e) => user_error(&format!("Filter parse error: {}", e)),
+            };
+            let matching_tasks = filter_tasks(&conn, &filter_expr)
+                .context("Failed to filter tasks")?;
+            
+            if matching_tasks.is_empty() {
+                user_error("No matching tasks found");
+            }
+            
+            matching_tasks.iter()
+                .filter_map(|(task, _)| task.id)
+                .collect()
+        }
+    };
+    
+    // Get current session if running (for session linking)
+    let open_session = SessionRepo::get_open(&conn)?;
+    let session_id = open_session.as_ref().and_then(|s| s.id);
+    
+    // Handle multiple tasks with confirmation
+    if task_ids.len() > 1 {
+        if !yes && !interactive {
+            // Prompt for confirmation
+            eprintln!("This will add annotation to {} tasks. Continue? (yes/no/interactive): ", task_ids.len());
+            let mut input = String::new();
+            std::io::stdin().read_line(&mut input)
+                .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
+            let input = input.trim().to_lowercase();
+            
+            match input.as_str() {
+                "y" | "yes" => {
+                    // Continue with all
+                }
+                "n" | "no" => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+                "i" | "interactive" => {
+                    // Process one by one
+                    for task_id in task_ids {
+                        eprint!("Add annotation to task {}? (y/n): ", task_id);
+                        let mut input = String::new();
+                        std::io::stdin().read_line(&mut input)
+                            .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
+                        if input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes" {
+                            let link_session_id = if let Some(ref session) = open_session {
+                                if session.task_id == task_id { session.id } else { None }
+                            } else {
+                                None
+                            };
+                            let annotation = AnnotationRepo::create(&conn, task_id, note.clone(), link_session_id)
+                                .context("Failed to create annotation")?;
+                            println!("Added annotation {} to task {}", annotation.id.unwrap(), task_id);
+                        }
+                    }
+                    return Ok(());
+                }
+                _ => {
+                    println!("Invalid response. Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else if interactive {
+            // Process one by one
+            for task_id in task_ids {
+                eprint!("Add annotation to task {}? (y/n): ", task_id);
+                let mut input = String::new();
+                std::io::stdin().read_line(&mut input)
+                    .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
+                if input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes" {
+                    let link_session_id = if let Some(ref session) = open_session {
+                        if session.task_id == task_id { session.id } else { None }
+                    } else {
+                        None
+                    };
+                    let annotation = AnnotationRepo::create(&conn, task_id, note.clone(), link_session_id)
+                        .context("Failed to create annotation")?;
+                    println!("Added annotation {} to task {}", annotation.id.unwrap(), task_id);
+                }
+            }
+            return Ok(());
+        }
+        // else: yes flag - continue with all
+    }
+    
+    // Apply annotation to all selected tasks
+    for task_id in task_ids {
+        let link_session_id = if let Some(ref session) = open_session {
+            if session.task_id == task_id { session.id } else { None }
+        } else {
+            None
+        };
+        let annotation = AnnotationRepo::create(&conn, task_id, note.clone(), link_session_id)
+            .context("Failed to create annotation")?;
+        println!("Added annotation {} to task {}", annotation.id.unwrap(), task_id);
+    }
+    
     Ok(())
 }
 

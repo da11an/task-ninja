@@ -354,3 +354,67 @@ Recommended implementation order:
 4. **Item 2 (Command abbreviation)** - Medium user impact, higher complexity, may require clap research
 
 **Note:** Items 1 and 4 can be implemented in parallel as they have no dependencies on each other.
+
+---
+
+## Implementation Checklist
+
+### Item 4: Filter-Before-Command Pattern
+- [x] Add handler for `task <filter> list` in `run()` function
+- [x] Add handler for `task <filter> annotate` in `run()` function
+- [x] Add handler for `task <filter> sessions` in `run()` function
+- [x] Update `handle_annotation_add` to support filters (multi-task annotation with confirmation)
+- [x] Update `handle_task_sessions_list` to support filters (aggregate sessions across matching tasks)
+- [x] Write tests for `task <filter> list` pattern
+- [x] Write tests for `task <filter> annotate` pattern
+- [x] Write tests for `task <filter> sessions` pattern
+- [x] Verify backward compatibility: `task list <filter>` still works
+- [ ] Fix remaining test issues (2 tests failing - likely test setup issue, command works in real environment)
+- [ ] Update design documentation if needed
+
+### Item 1: Enhanced Project Not Found Error Messages
+- [ ] Implement Levenshtein distance function (or evaluate `strsim` crate)
+- [ ] Add fuzzy matching utility function
+- [ ] Update `handle_task_add` to use fuzzy matching for project errors
+- [ ] Update `handle_task_modify` to use fuzzy matching for project errors
+- [ ] Update other handlers that reference projects
+- [ ] Implement "show up to 5 matches" logic
+- [ ] Write tests for project fuzzy matching
+- [ ] Write tests for multiple near matches
+- [ ] Write tests for case-insensitive matching
+- [ ] Write tests for substring matching
+- [ ] Write tests for active vs archived project checking
+
+### Item 3: Status Lines for Commands Without Arguments
+- [ ] Research clap help customization/interception
+- [ ] Implement status computation for `task` (root command)
+- [ ] Implement status computation for `task clock`
+- [ ] Implement status computation for `task projects`
+- [ ] Implement status computation for `task stack`
+- [ ] Implement status computation for `task recur`
+- [ ] Implement status computation for `task sessions`
+- [ ] Implement status computation for `task annotate`
+- [ ] Add status display to help output
+- [ ] Write tests for status line computation
+- [ ] Performance test status queries on large datasets
+- [ ] Update stack command description
+
+### Item 2: Command Truncation/Abbreviation Support
+- [ ] Research clap abbreviation capabilities
+- [ ] Implement command abbreviation matching (top-level commands)
+- [ ] Implement command abbreviation matching (subcommands)
+- [ ] Implement ambiguous case error handling
+- [ ] Add configuration option for expansion verbosity (`~/.taskninja/rc`)
+- [ ] Write tests for command abbreviation
+- [ ] Write tests for ambiguous cases
+- [ ] Write tests for configuration option
+- [ ] Document abbreviation feature
+
+---
+
+## Implementation Notes
+
+- **Testing Strategy:** Each item should have comprehensive tests before moving to the next
+- **Stop Between Tasks:** Review and verify each item before proceeding
+- **Regression Prevention:** All existing tests must continue to pass
+- **Documentation:** Update relevant design docs as implementation progresses

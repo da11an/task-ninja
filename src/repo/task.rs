@@ -194,4 +194,169 @@ impl TaskRepo {
         
         Ok(tasks)
     }
+
+    /// Modify a task
+    pub fn modify(
+        conn: &Connection,
+        task_id: i64,
+        description: Option<String>,
+        project_id: Option<Option<i64>>, // Some(None) means clear, None means don't change
+        due_ts: Option<Option<i64>>,
+        scheduled_ts: Option<Option<i64>>,
+        wait_ts: Option<Option<i64>>,
+        alloc_secs: Option<Option<i64>>,
+        template: Option<Option<String>>,
+        recur: Option<Option<String>>,
+        udas_to_add: &HashMap<String, String>,
+        udas_to_remove: &[String],
+        tags_to_add: &[String],
+        tags_to_remove: &[String],
+    ) -> Result<()> {
+        // Get current task
+        let mut task = Self::get_by_id(conn, task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
+        
+        let now = chrono::Utc::now().timestamp();
+        
+        // Update description if provided
+        if let Some(desc) = description {
+            task.description = desc;
+        }
+        
+        // Update project
+        if let Some(proj_id) = project_id {
+            task.project_id = proj_id;
+        }
+        
+        // Update dates
+        if let Some(due) = due_ts {
+            task.due_ts = due;
+        }
+        if let Some(scheduled) = scheduled_ts {
+            task.scheduled_ts = scheduled;
+        }
+        if let Some(wait) = wait_ts {
+            task.wait_ts = wait;
+        }
+        if let Some(alloc) = alloc_secs {
+            task.alloc_secs = alloc;
+        }
+        if let Some(tmpl) = template {
+            task.template = tmpl;
+        }
+        if let Some(rec) = recur {
+            task.recur = rec;
+        }
+        
+        // Update UDAs
+        for (key, value) in udas_to_add {
+            task.udas.insert(key.clone(), value.clone());
+        }
+        for key in udas_to_remove {
+            task.udas.remove(key);
+        }
+        
+        // Serialize UDAs
+        let udas_json = if task.udas.is_empty() {
+            None
+        } else {
+            Some(serde_json::to_string(&task.udas)?)
+        };
+        
+        // Update task in database
+        conn.execute(
+            "UPDATE tasks SET description = ?1, project_id = ?2, due_ts = ?3, scheduled_ts = ?4,
+                    wait_ts = ?5, alloc_secs = ?6, template = ?7, recur = ?8, udas_json = ?9,
+                    modified_ts = ?10 WHERE id = ?11",
+            rusqlite::params![
+                task.description,
+                task.project_id,
+                task.due_ts,
+                task.scheduled_ts,
+                task.wait_ts,
+                task.alloc_secs,
+                task.template,
+                task.recur,
+                udas_json,
+                now,
+                task_id
+            ],
+        )?;
+        
+        // Update tags
+        for tag in tags_to_add {
+            // Check if tag already exists
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM task_tags WHERE task_id = ?1 AND tag = ?2)",
+                rusqlite::params![task_id, tag],
+                |row| row.get(0),
+            )?;
+            
+            if !exists {
+                conn.execute(
+                    "INSERT INTO task_tags (task_id, tag) VALUES (?1, ?2)",
+                    rusqlite::params![task_id, tag],
+                )?;
+            }
+        }
+        
+        for tag in tags_to_remove {
+            conn.execute(
+                "DELETE FROM task_tags WHERE task_id = ?1 AND tag = ?2",
+                rusqlite::params![task_id, tag],
+            )?;
+        }
+        
+        Ok(())
+    }
+
+    /// Get tasks by IDs (for multi-task modification)
+    pub fn get_by_ids(conn: &Connection, ids: &[i64]) -> Result<Vec<Task>> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        
+        let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!(
+            "SELECT id, uuid, description, status, project_id, due_ts, scheduled_ts, 
+                    wait_ts, alloc_secs, template, recur, udas_json, created_ts, modified_ts 
+             FROM tasks WHERE id IN ({})",
+            placeholders
+        );
+        
+        let mut stmt = conn.prepare(&query)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(ids.iter()), |row| {
+            let udas_json: Option<String> = row.get(11)?;
+            let mut udas = HashMap::new();
+            if let Some(json) = udas_json {
+                if let Ok(parsed) = serde_json::from_str::<HashMap<String, String>>(&json) {
+                    udas = parsed;
+                }
+            }
+            
+            Ok(Task {
+                id: Some(row.get(0)?),
+                uuid: row.get(1)?,
+                description: row.get(2)?,
+                status: crate::models::TaskStatus::from_str(&row.get::<_, String>(3)?)
+                    .unwrap_or(crate::models::TaskStatus::Pending),
+                project_id: row.get(4)?,
+                due_ts: row.get(5)?,
+                scheduled_ts: row.get(6)?,
+                wait_ts: row.get(7)?,
+                alloc_secs: row.get(8)?,
+                template: row.get(9)?,
+                recur: row.get(10)?,
+                udas,
+                created_ts: row.get(12)?,
+                modified_ts: row.get(13)?,
+            })
+        })?;
+        
+        let mut tasks = Vec::new();
+        for row in rows {
+            tasks.push(row?);
+        }
+        Ok(tasks)
+    }
 }

@@ -3,6 +3,7 @@ use crate::db::DbConnection;
 use crate::repo::{ProjectRepo, TaskRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::utils::{parse_date_expr, parse_duration};
+use std::collections::HashMap;
 use anyhow::{Context, Result};
 
 #[derive(Parser)]
@@ -31,6 +32,20 @@ pub enum Commands {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+    },
+    /// Modify tasks
+    Modify {
+        /// Task ID or filter (for now, only ID supported)
+        id_or_filter: String,
+        /// Modification arguments (description, fields, tags)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Apply to all matching tasks without confirmation
+        #[arg(long)]
+        yes: bool,
+        /// Force one-by-one confirmation for each task
+        #[arg(long)]
+        interactive: bool,
     },
 }
 
@@ -73,12 +88,37 @@ pub enum ProjectCommands {
 }
 
 pub fn run() -> Result<()> {
+    // Get raw args to handle task <id|filter> modify syntax
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    
+    // Check if this is task <id|filter> modify pattern
+    if args.len() >= 2 {
+        // Look for "modify" subcommand
+        if let Some(modify_pos) = args.iter().position(|a| a == "modify") {
+            if modify_pos > 0 {
+                // We have task <id|filter> modify
+                let id_or_filter = args[0].clone();
+                let modify_args = args[modify_pos + 1..].to_vec();
+                
+                // Parse flags
+                let yes = modify_args.contains(&"--yes".to_string());
+                let interactive = modify_args.contains(&"--interactive".to_string());
+                
+                return handle_task_modify(id_or_filter, modify_args, yes, interactive);
+            }
+        }
+    }
+    
+    // Otherwise use clap parsing
     let cli = Cli::parse();
     
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
         Commands::Add { args } => handle_task_add(args),
         Commands::List { json } => handle_task_list(json),
+        Commands::Modify { id_or_filter, args, yes, interactive } => {
+            handle_task_modify(id_or_filter, args, yes, interactive)
+        }
     }
 }
 
@@ -287,5 +327,144 @@ fn handle_task_list(json: bool) -> Result<()> {
         }
     }
     
+    Ok(())
+}
+
+fn handle_task_modify(id_or_filter: String, args: Vec<String>, _yes: bool, _interactive: bool) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    // For now, only support numeric ID (full filter support in Phase 3)
+    let task_id: i64 = id_or_filter.parse()
+        .map_err(|_| anyhow::anyhow!("Invalid task ID: {}. Filter support will be added in Phase 3.", id_or_filter))?;
+    
+    // Check if task exists
+    if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
+        eprintln!("Error: Task {} not found", task_id);
+        std::process::exit(1);
+    }
+    
+    // Parse modification arguments
+    let parsed = parse_task_args(args);
+    
+    // Parse description (optional)
+    let description = if parsed.description.is_empty() {
+        None
+    } else {
+        Some(join_description(&parsed.description))
+    };
+    
+    // Resolve project (handle clearing with project:none)
+    let project_id = if let Some(project_name) = &parsed.project {
+        if project_name == "none" {
+            Some(None) // Clear project
+        } else {
+            let project = ProjectRepo::get_by_name(&conn, project_name)?;
+            if let Some(p) = project {
+                Some(Some(p.id.unwrap()))
+            } else {
+                eprintln!("Error: Project '{}' not found", project_name);
+                std::process::exit(1);
+            }
+        }
+    } else {
+        None // Don't change
+    };
+    
+    // Parse dates (handle clearing with field:none)
+    let due_ts = if let Some(due) = &parsed.due {
+        if due == "none" {
+            Some(None)
+        } else {
+            Some(Some(parse_date_expr(due).context("Failed to parse due date")?))
+        }
+    } else {
+        None
+    };
+    
+    let scheduled_ts = if let Some(scheduled) = &parsed.scheduled {
+        if scheduled == "none" {
+            Some(None)
+        } else {
+            Some(Some(parse_date_expr(scheduled).context("Failed to parse scheduled date")?))
+        }
+    } else {
+        None
+    };
+    
+    let wait_ts = if let Some(wait) = &parsed.wait {
+        if wait == "none" {
+            Some(None)
+        } else {
+            Some(Some(parse_date_expr(wait).context("Failed to parse wait date")?))
+        }
+    } else {
+        None
+    };
+    
+    // Parse duration (handle clearing)
+    let alloc_secs = if let Some(alloc) = &parsed.alloc {
+        if alloc == "none" {
+            Some(None)
+        } else {
+            Some(Some(parse_duration(alloc).context("Failed to parse allocation duration")?))
+        }
+    } else {
+        None
+    };
+    
+    // Handle template and recur clearing
+    let template = if let Some(tmpl) = &parsed.template {
+        if tmpl == "none" {
+            Some(None)
+        } else {
+            Some(Some(tmpl.clone()))
+        }
+    } else {
+        None
+    };
+    
+    let recur = if let Some(rec) = &parsed.recur {
+        if rec == "none" {
+            Some(None)
+        } else {
+            Some(Some(rec.clone()))
+        }
+    } else {
+        None
+    };
+    
+    // Separate UDAs to add and remove
+    let mut udas_to_add = HashMap::new();
+    let mut udas_to_remove = Vec::new();
+    
+    for (key, value) in &parsed.udas {
+        if value == "none" {
+            udas_to_remove.push(key.clone());
+        } else {
+            udas_to_add.insert(key.clone(), value.clone());
+        }
+    }
+    
+    // Apply modifications
+    TaskRepo::modify(
+        &conn,
+        task_id,
+        description,
+        project_id,
+        due_ts,
+        scheduled_ts,
+        wait_ts,
+        alloc_secs,
+        template,
+        recur,
+        &udas_to_add,
+        &udas_to_remove,
+        &parsed.tags_add,
+        &parsed.tags_remove,
+    )
+    .context("Failed to modify task")?;
+    
+    println!("Modified task {}", task_id);
     Ok(())
 }

@@ -63,14 +63,14 @@
 - [ ] Acceptance: Basic task add/list scenarios (will add when more features complete)
 
 ### 2.3 Task Modification
-- [ ] Implement `task <id|filter> modify` command
-- [ ] Implement multi-task confirmation (yes/no/interactive)
-- [ ] Implement `--yes` and `--interactive` flags
-- [ ] Test: Single task modification
-- [ ] Test: Filter-based modification with confirmation
-- [ ] Test: Description replacement
-- [ ] Test: Field clearing (`field:none`)
-- [ ] Acceptance: Modify scenarios
+- [x] Implement `task <id|filter> modify` command (ID support only for now, filter support in Phase 3)
+- [x] Implement multi-task confirmation (yes/no/interactive) - structure in place, full support when filters added
+- [x] Implement `--yes` and `--interactive` flags (structure in place)
+- [x] Test: Single task modification
+- [ ] Test: Filter-based modification with confirmation (deferred to Phase 3)
+- [x] Test: Description replacement
+- [x] Test: Field clearing (`field:none`)
+- [ ] Acceptance: Modify scenarios (will add when more features complete)
 
 ---
 

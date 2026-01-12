@@ -5,7 +5,7 @@ use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo,
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter};
 use crate::cli::output::{format_task_list_table, format_stack_display};
-use crate::cli::error::{user_error, validate_task_id, validate_project_name};
+use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec};
 use crate::utils::{parse_date_expr, parse_duration, fuzzy};
 use crate::filter::{parse_filter, filter_tasks};
 use crate::recur::RecurGenerator;
@@ -850,7 +850,29 @@ fn handle_task_list(filter_args: Vec<String>, json: bool) -> Result<()> {
     let tasks = if filter_args.is_empty() {
         TaskRepo::list_all(&conn)
             .context("Failed to list tasks")?
+    } else if filter_args.len() == 1 {
+        // Single argument - try to parse as ID spec (range/list) first
+        match parse_task_id_spec(&filter_args[0]) {
+            Ok(ids) => {
+                // Valid ID spec - fetch tasks by IDs
+                let mut tasks_by_id = Vec::new();
+                for id in ids {
+                    if let Some(task) = TaskRepo::get_by_id(&conn, id)? {
+                        tasks_by_id.push((task, Vec::new())); // No tags for now
+                    }
+                }
+                tasks_by_id
+            }
+            Err(_) => {
+                // Not an ID spec - try as filter
+                let filter_expr = parse_filter(filter_args)
+                    .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+                filter_tasks(&conn, &filter_expr)
+                    .context("Failed to filter tasks")?
+            }
+        }
     } else {
+        // Multiple arguments - treat as filter
         let filter_expr = parse_filter(filter_args)
             .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
         filter_tasks(&conn, &filter_expr)
@@ -891,31 +913,39 @@ fn handle_task_modify(id_or_filter: String, args: Vec<String>, yes: bool, intera
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    // Try to parse as task ID first, otherwise treat as filter
-    let task_ids: Vec<i64> = match validate_task_id(&id_or_filter) {
-        Ok(id) => {
-            // Single task ID
-            if TaskRepo::get_by_id(&conn, id)?.is_none() {
-                user_error(&format!("Task {} not found", id));
-            }
-            vec![id]
+    // Try to parse as task ID spec (single ID, range, or list) first
+    let task_ids: Vec<i64> = match parse_task_id_spec(&id_or_filter) {
+        Ok(ids) => {
+            // Valid ID spec (single, range, or list)
+            ids
         }
         Err(_) => {
-            // Treat as filter
-            let filter_expr = match parse_filter(vec![id_or_filter]) {
-                Ok(expr) => expr,
-                Err(e) => user_error(&format!("Filter parse error: {}", e)),
-            };
-            let matching_tasks = filter_tasks(&conn, &filter_expr)
-                .context("Failed to filter tasks")?;
-            
-            if matching_tasks.is_empty() {
-                user_error("No matching tasks found");
+            // Not an ID spec - try single ID for backward compatibility
+            match validate_task_id(&id_or_filter) {
+                Ok(id) => {
+                    if TaskRepo::get_by_id(&conn, id)?.is_none() {
+                        user_error(&format!("Task {} not found", id));
+                    }
+                    vec![id]
+                }
+                Err(_) => {
+                    // Treat as filter
+                    let filter_expr = match parse_filter(vec![id_or_filter]) {
+                        Ok(expr) => expr,
+                        Err(e) => user_error(&format!("Filter parse error: {}", e)),
+                    };
+                    let matching_tasks = filter_tasks(&conn, &filter_expr)
+                        .context("Failed to filter tasks")?;
+                    
+                    if matching_tasks.is_empty() {
+                        user_error("No matching tasks found");
+                    }
+                    
+                    matching_tasks.iter()
+                        .filter_map(|(task, _)| task.id)
+                        .collect()
+                }
             }
-            
-            matching_tasks.iter()
-                .filter_map(|(task, _)| task.id)
-                .collect()
         }
     };
     
@@ -1818,38 +1848,61 @@ fn handle_task_done(
     // Determine which tasks to complete
     let task_ids = if let Some(id_or_filter) = id_or_filter_opt {
         // Task ID or filter provided
-        // Try to parse as ID first
-        if let Ok(task_id) = id_or_filter.parse::<i64>() {
-            // Single task ID
-            vec![task_id]
-        } else {
-            // Filter expression
-            let filter_expr = parse_filter(vec![id_or_filter])
-                .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
-            let matching_tasks = filter_tasks(&conn, &filter_expr)
-                .context("Failed to filter tasks")?;
-            
-            // Filter to only tasks with running sessions
-            let tasks_with_sessions: Vec<i64> = matching_tasks
-                .iter()
-                .filter_map(|(task, _)| {
-                    if let Some(task_id) = task.id {
-                        if running_task_id == Some(task_id) {
-                            Some(task_id)
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            
-            if tasks_with_sessions.is_empty() {
-                user_error("No matching tasks with running sessions found.");
+        // Try to parse as task ID spec (single ID, range, or list) first
+        match parse_task_id_spec(&id_or_filter) {
+            Ok(ids) => {
+                // Valid ID spec (single, range, or list)
+                // Filter to only tasks with running sessions
+                let tasks_with_sessions: Vec<i64> = ids.iter()
+                    .filter(|&&task_id| running_task_id == Some(task_id))
+                    .copied()
+                    .collect();
+                
+                if tasks_with_sessions.is_empty() {
+                    user_error("No matching tasks with running sessions found.");
+                }
+                
+                tasks_with_sessions
             }
-            
-            tasks_with_sessions
+            Err(_) => {
+                // Not an ID spec - try single ID for backward compatibility
+                if let Ok(task_id) = id_or_filter.parse::<i64>() {
+                    // Single task ID
+                    if running_task_id == Some(task_id) {
+                        vec![task_id]
+                    } else {
+                        user_error("No matching tasks with running sessions found.");
+                    }
+                } else {
+                    // Filter expression
+                    let filter_expr = parse_filter(vec![id_or_filter])
+                        .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+                    let matching_tasks = filter_tasks(&conn, &filter_expr)
+                        .context("Failed to filter tasks")?;
+                    
+                    // Filter to only tasks with running sessions
+                    let tasks_with_sessions: Vec<i64> = matching_tasks
+                        .iter()
+                        .filter_map(|(task, _)| {
+                            if let Some(task_id) = task.id {
+                                if running_task_id == Some(task_id) {
+                                    Some(task_id)
+                                } else {
+                                    None
+                                }
+                            } else {
+                                None
+                            }
+                        })
+                        .collect();
+                    
+                    if tasks_with_sessions.is_empty() {
+                        user_error("No matching tasks with running sessions found.");
+                    }
+                    
+                    tasks_with_sessions
+                }
+            }
         }
     } else {
         // No ID provided - use stack[0]
@@ -2059,26 +2112,34 @@ fn handle_task_delete(id_or_filter: String, yes: bool, interactive: bool) -> Res
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    // Try to parse as task ID first, otherwise treat as filter
-    let task_ids = match validate_task_id(&id_or_filter) {
-        Ok(task_id) => {
-            // Single task ID
-            vec![task_id]
+    // Try to parse as task ID spec (single ID, range, or list) first
+    let task_ids = match parse_task_id_spec(&id_or_filter) {
+        Ok(ids) => {
+            // Valid ID spec (single, range, or list)
+            ids
         }
         Err(_) => {
-            // Treat as filter - get all matching tasks
-            let filter_expr = parse_filter(vec![id_or_filter.clone()])
-                .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
-            let matching_tasks = filter_tasks(&conn, &filter_expr)
-                .context("Failed to filter tasks")?;
-            
-            if matching_tasks.is_empty() {
-                user_error("No matching tasks found");
+            // Not an ID spec - try single ID for backward compatibility
+            match validate_task_id(&id_or_filter) {
+                Ok(task_id) => {
+                    vec![task_id]
+                }
+                Err(_) => {
+                    // Treat as filter - get all matching tasks
+                    let filter_expr = parse_filter(vec![id_or_filter.clone()])
+                        .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+                    let matching_tasks = filter_tasks(&conn, &filter_expr)
+                        .context("Failed to filter tasks")?;
+                    
+                    if matching_tasks.is_empty() {
+                        user_error("No matching tasks found");
+                    }
+                    
+                    matching_tasks.iter()
+                        .filter_map(|(task, _)| task.id)
+                        .collect()
+                }
             }
-            
-            matching_tasks.iter()
-                .filter_map(|(task, _)| task.id)
-                .collect()
         }
     };
     

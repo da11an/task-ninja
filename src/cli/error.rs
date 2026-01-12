@@ -50,6 +50,80 @@ pub fn validate_task_id(id_str: &str) -> Result<i64, String> {
         })
 }
 
+/// Parse a task ID specification (single ID, range, or list)
+/// Returns a vector of task IDs
+/// 
+/// Examples:
+/// - "5" → [5]
+/// - "2-4" → [2, 3, 4]
+/// - "2,3,4" → [2, 3, 4]
+/// - "2,5-7,10" → [2, 5, 6, 7, 10]
+/// - "4-2" → [2, 3, 4] (reverse range, sorted)
+pub fn parse_task_id_spec(spec: &str) -> Result<Vec<i64>, String> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return Err("Empty task ID specification".to_string());
+    }
+    
+    let mut ids = Vec::new();
+    
+    // Split by comma to handle lists
+    let parts: Vec<&str> = spec.split(',').map(|s| s.trim()).collect();
+    
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+        
+        // Check if this is a range (contains '-')
+        if part.contains('-') {
+            let range_parts: Vec<&str> = part.split('-').map(|s| s.trim()).collect();
+            if range_parts.len() != 2 {
+                return Err(format!("Invalid range syntax: '{}'. Range must be two numbers separated by '-'.", part));
+            }
+            
+            let start = range_parts[0].parse::<i64>()
+                .map_err(|_| format!("Invalid start ID in range '{}': must be a number", part))?;
+            let end = range_parts[1].parse::<i64>()
+                .map_err(|_| format!("Invalid end ID in range '{}': must be a number", part))?;
+            
+            if start <= 0 || end <= 0 {
+                return Err(format!("Task IDs in range '{}' must be positive", part));
+            }
+            
+            // Handle both forward and reverse ranges
+            let (min, max) = if start <= end {
+                (start, end)
+            } else {
+                (end, start)
+            };
+            
+            // Generate IDs in range (inclusive)
+            for id in min..=max {
+                ids.push(id);
+            }
+        } else {
+            // Single ID
+            let id = part.parse::<i64>()
+                .map_err(|_| format!("Invalid task ID '{}': must be a number", part))?;
+            if id <= 0 {
+                return Err(format!("Task ID '{}' must be positive", part));
+            }
+            ids.push(id);
+        }
+    }
+    
+    // Remove duplicates and sort
+    ids.sort();
+    ids.dedup();
+    
+    if ids.is_empty() {
+        return Err("No valid task IDs found in specification".to_string());
+    }
+    
+    Ok(ids)
+}
+
 /// Validate that a stack index is valid (non-negative integer)
 pub fn validate_stack_index(index_str: &str) -> Result<i32, String> {
     index_str.parse::<i32>()

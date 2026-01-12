@@ -212,7 +212,13 @@ pub enum SessionsCommands {
 
 #[derive(Subcommand)]
 pub enum ClockCommands {
-    /// Show current clock stack
+    /// List clock stack (shows all tasks in queue)
+    List {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show current clock stack (alias for list)
     Show {
         /// Output in JSON format
         #[arg(long)]
@@ -1194,7 +1200,7 @@ fn handle_clock(cmd: ClockCommands, task: Option<String>) -> Result<()> {
         .context("Failed to connect to database")?;
     
     match cmd {
-        ClockCommands::Show { json } => {
+        ClockCommands::List { json } | ClockCommands::Show { json } => {
             let stack = StackRepo::get_or_create_default(&conn)?;
             let stack_id = stack.id.unwrap();
             let items = StackRepo::get_items(&conn, stack_id)?;

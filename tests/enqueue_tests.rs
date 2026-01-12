@@ -34,14 +34,14 @@ fn test_enqueue_single_task() {
     
     // Enqueue it
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"])
+    cmd.args(&["clock", "enqueue", "1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Enqueued task 1"));
     
-    // Verify it's on the stack
+    // Verify it's on the clock stack
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "show"])
+    cmd.args(&["clock", "list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("1"));
@@ -63,17 +63,17 @@ fn test_enqueue_multiple_tasks_in_order() {
     
     // Enqueue them in order
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["2", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "2"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["3", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "3"]).assert().success();
     
-    // Verify stack order is [1, 2, 3] (check for Task 1, Task 2, Task 3 in order)
+    // Verify clock stack order is [1, 2, 3] (check for Task 1, Task 2, Task 3 in order)
     let mut cmd = get_task_cmd();
-    let output = cmd.args(&["stack", "show"]).output().unwrap();
+    let output = cmd.args(&["clock", "list"]).output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     
     // Verify all tasks are present
@@ -94,7 +94,7 @@ fn test_enqueue_nonexistent_task() {
     
     // Try to enqueue a task that doesn't exist
     let mut cmd = get_task_cmd();
-    cmd.args(&["999", "enqueue"])
+    cmd.args(&["clock", "enqueue", "999"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Task 999 not found"));
@@ -106,7 +106,7 @@ fn test_enqueue_invalid_task_id() {
     
     // Try to enqueue with invalid ID
     let mut cmd = get_task_cmd();
-    cmd.args(&["abc", "enqueue"])
+    cmd.args(&["clock", "enqueue", "abc"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid task ID"));
@@ -122,22 +122,22 @@ fn test_enqueue_task_already_on_stack() {
     
     // Enqueue it once
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
-    // Verify it's on the stack
+    // Verify it's on the clock stack
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "show"])
+    cmd.args(&["clock", "list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("1"));
     
     // Try to enqueue it again - should move to end (not create duplicate)
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
-    // Verify it's still on the stack (only once) - check for task ID 1
+    // Verify it's still on the clock stack (only once) - check for task ID 1
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "show"])
+    cmd.args(&["clock", "list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Task 1"));
@@ -147,11 +147,11 @@ fn test_enqueue_task_already_on_stack() {
     cmd.args(&["add", "Task 2"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["2", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "2"]).assert().success();
     
-    // Stack should have both tasks (1 was already at end, 2 added after)
+    // Clock stack should have both tasks (1 was already at end, 2 added after)
     let mut cmd = get_task_cmd();
-    let output = cmd.args(&["stack", "show"]).output().unwrap();
+    let output = cmd.args(&["clock", "list"]).output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     
     // Verify both tasks are present and in order
@@ -173,7 +173,7 @@ fn test_enqueue_completed_task() {
     cmd.args(&["add", "Test task"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     let mut cmd = get_task_cmd();
     cmd.args(&["clock", "in"]).assert().success();
@@ -190,11 +190,11 @@ fn test_enqueue_completed_task() {
     
     // Try to enqueue the completed task
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
-    // Verify it's on the stack (completed tasks can be enqueued)
+    // Verify it's on the clock stack (completed tasks can be enqueued)
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "show"])
+    cmd.args(&["clock", "list"])
         .assert()
         .success()
         .stdout(predicate::str::contains("1"));
@@ -206,7 +206,7 @@ fn test_enqueue_negative_task_id() {
     
     // Try to enqueue with negative ID
     let mut cmd = get_task_cmd();
-    cmd.args(&["-1", "enqueue"])
+    cmd.args(&["clock", "enqueue", "-1"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid task ID"));
@@ -218,7 +218,7 @@ fn test_enqueue_zero_task_id() {
     
     // Try to enqueue with zero ID
     let mut cmd = get_task_cmd();
-    cmd.args(&["0", "enqueue"])
+    cmd.args(&["clock", "enqueue", "0"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid task ID"));
@@ -230,7 +230,7 @@ fn test_enqueue_empty_string() {
     
     // Try to enqueue with empty string (should fail parsing)
     let mut cmd = get_task_cmd();
-    cmd.args(&["", "enqueue"])
+    cmd.args(&["clock", "enqueue", ""])
         .assert()
         .failure();
 }
@@ -249,7 +249,7 @@ fn test_enqueue_with_range_syntax() {
     // Try to enqueue with range syntax - should this work?
     // Currently enqueue only accepts single IDs, not ranges
     let mut cmd = get_task_cmd();
-    cmd.args(&["1-2", "enqueue"])
+    cmd.args(&["clock", "enqueue", "1-2"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid task ID"));
@@ -269,7 +269,7 @@ fn test_enqueue_with_comma_list() {
     // Try to enqueue with comma list - should this work?
     // Currently enqueue only accepts single IDs, not lists
     let mut cmd = get_task_cmd();
-    cmd.args(&["1,2", "enqueue"])
+    cmd.args(&["clock", "enqueue", "1,2"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Invalid task ID"));
@@ -291,31 +291,31 @@ fn test_enqueue_after_stack_operations() {
     
     // Enqueue tasks 1 and 2
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["2", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "2"]).assert().success();
     
-    // Roll the stack
+    // Roll the clock stack
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "roll", "1"]).assert().success();
+    cmd.args(&["clock", "roll", "1"]).assert().success();
     
-    // Verify stack is [2, 1] (Task 2, Task 1 in order)
+    // Verify clock stack is [2, 1] (Task 2, Task 1 in order)
     let mut cmd = get_task_cmd();
-    let output = cmd.args(&["stack", "show"]).output().unwrap();
+    let output = cmd.args(&["clock", "list"]).output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
-    assert!(stdout.contains("Task 2") && stdout.contains("Task 1"), "Stack should contain Task 2 and Task 1");
+    assert!(stdout.contains("Task 2") && stdout.contains("Task 1"), "Clock stack should contain Task 2 and Task 1");
     let pos2 = stdout.find("Task 2").unwrap();
     let pos1 = stdout.find("Task 1").unwrap();
     assert!(pos2 < pos1, "Task 2 should come before Task 1");
     
     // Enqueue task 3 - should go to the end
     let mut cmd = get_task_cmd();
-    cmd.args(&["3", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "3"]).assert().success();
     
-    // Verify stack is [2, 1, 3] (Task 2, Task 1, Task 3 in order)
+    // Verify clock stack is [2, 1, 3] (Task 2, Task 1, Task 3 in order)
     let mut cmd = get_task_cmd();
-    let output = cmd.args(&["stack", "show"]).output().unwrap();
+    let output = cmd.args(&["clock", "list"]).output().unwrap();
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("Task 2") && stdout.contains("Task 1") && stdout.contains("Task 3"), 
             "Stack should contain all three tasks");

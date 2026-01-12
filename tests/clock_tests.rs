@@ -35,7 +35,7 @@ fn test_clock_in_empty_stack() {
     
     // Clear stack
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "clear"]).assert().success();
+    cmd.args(&["clock", "clear"]).assert().success();
     
     // Try to clock in with empty stack - should fail
     let mut cmd = get_task_cmd();
@@ -54,7 +54,7 @@ fn test_clock_in_already_running() {
     cmd.args(&["add", "test task"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     // Clock in
     let mut cmd = get_task_cmd();
@@ -93,7 +93,7 @@ fn test_clock_in_out_workflow() {
     cmd.args(&["add", "test task"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     // Clock in
     let mut cmd = get_task_cmd();
@@ -120,11 +120,11 @@ fn test_clock_in_default_now() {
     
     // Clear any existing stack state
     let mut cmd = get_task_cmd();
-    cmd.args(&["stack", "clear"]).assert().success();
+    cmd.args(&["clock", "clear"]).assert().success();
     
     // Add task to stack
     let mut cmd = get_task_cmd();
-    cmd.args(&["1", "enqueue"]).assert().success();
+    cmd.args(&["clock", "enqueue", "1"]).assert().success();
     
     // Clock in without arguments (should default to "now")
     let mut cmd = get_task_cmd();

@@ -54,9 +54,9 @@ fn test_filter_list_pattern() {
         .assert()
         .success();
     
-    // Test: task <filter> list (new pattern)
+    // Test: task list <filter> (CLAP-native pattern)
     new_cmd(&temp_dir)
-        .args(&["project:work", "list"])
+        .args(&["list", "project:work"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Task 1"))
@@ -69,16 +69,16 @@ fn test_filter_list_pattern() {
         .success()
         .stdout(predicate::str::contains("Task 2"));
     
-    // Test: task <id> list
+    // Test: task show <id> (CLAP-native)
     new_cmd(&temp_dir)
-        .args(&["1", "list"])
+        .args(&["show", "1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Task 1"));
     
-    // Test: task <filter> list --json
+    // Test: task list <filter> --json
     new_cmd(&temp_dir)
-        .args(&["project:work", "list", "--json"])
+        .args(&["list", "project:work", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"project_id\""))
@@ -113,23 +113,23 @@ fn test_filter_annotate_pattern() {
         .assert()
         .success();
     
-    // Test: task <id> annotate (existing pattern)
+    // Test: task annotate <id> (CLAP-native pattern)
     new_cmd(&temp_dir)
-        .args(&["1", "annotate", "Note for task 1"])
+        .args(&["annotate", "1", "Note for task 1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Added annotation"));
     
-    // Test: task <filter> annotate (new pattern) - single match
+    // Test: task annotate <id> - single match
     new_cmd(&temp_dir)
-        .args(&["3", "annotate", "Note for task 3"])
+        .args(&["annotate", "3", "Note for task 3"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Added annotation"));
     
-    // Test: task <filter> annotate with --yes flag (multiple matches)
+    // Test: task annotate <filter> with --yes flag (multiple matches)
     new_cmd(&temp_dir)
-        .args(&["project:work", "annotate", "--yes", "Note for all work tasks"])
+        .args(&["annotate", "project:work", "--yes", "Note for all work tasks"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Added annotation"))
@@ -167,7 +167,11 @@ fn test_filter_sessions_pattern() {
     
     // Clock in and out for tasks
     new_cmd(&temp_dir)
-        .args(&["1", "clock", "in"])
+        .args(&["clock", "enqueue", "1"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["clock", "in"])
         .assert()
         .success();
     new_cmd(&temp_dir)
@@ -176,7 +180,11 @@ fn test_filter_sessions_pattern() {
         .success();
     
     new_cmd(&temp_dir)
-        .args(&["2", "clock", "in"])
+        .args(&["clock", "enqueue", "2"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["clock", "in"])
         .assert()
         .success();
     new_cmd(&temp_dir)
@@ -185,7 +193,11 @@ fn test_filter_sessions_pattern() {
         .success();
     
     new_cmd(&temp_dir)
-        .args(&["3", "clock", "in"])
+        .args(&["clock", "enqueue", "3"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["clock", "in"])
         .assert()
         .success();
     new_cmd(&temp_dir)
@@ -195,14 +207,14 @@ fn test_filter_sessions_pattern() {
     
     // Test: task <id> sessions list (existing pattern)
     new_cmd(&temp_dir)
-        .args(&["1", "sessions", "list"])
+        .args(&["sessions", "list", "--task", "1"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Task 1"));
     
     // Test: task <filter> sessions list (new pattern)
     new_cmd(&temp_dir)
-        .args(&["project:work", "sessions", "list"])
+        .args(&["sessions", "list", "--task", "project:work"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Task 1"))
@@ -210,15 +222,15 @@ fn test_filter_sessions_pattern() {
     
     // Test: task <filter> sessions list --json
     new_cmd(&temp_dir)
-        .args(&["project:work", "sessions", "list", "--json"])
+        .args(&["sessions", "list", "--task", "project:work", "--json"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"task_id\""))
         .stdout(predicate::str::contains("\"start_ts\""));
     
-    // Test: task <filter> sessions show
+    // Test: task sessions show --task <filter>
     new_cmd(&temp_dir)
-        .args(&["project:work", "sessions", "show"])
+        .args(&["sessions", "show", "--task", "project:work"])
         .assert()
         .success()
         .stdout(predicate::str::contains("Session"))
@@ -249,21 +261,21 @@ fn test_backward_compatibility() {
         .assert()
         .success();
     
-    // All old patterns should still work
+    // All CLAP-native patterns should work
     new_cmd(&temp_dir)
         .args(&["list", "project:work"])
         .assert()
         .success();
     new_cmd(&temp_dir)
-        .args(&["list", "1"])
+        .args(&["show", "1"])
         .assert()
         .success();
     new_cmd(&temp_dir)
-        .args(&["1", "annotate", "Note"])
+        .args(&["annotate", "1", "Note"])
         .assert()
         .success();
     new_cmd(&temp_dir)
-        .args(&["1", "sessions", "list"])
+        .args(&["sessions", "list", "--task", "1"])
         .assert()
         .success();
 }
@@ -284,7 +296,7 @@ fn test_filter_list_no_matches() {
     
     // Filter that matches nothing
     new_cmd(&temp_dir)
-        .args(&["project:nonexistent", "list"])
+        .args(&["list", "project:nonexistent"])
         .assert()
         .success()
         .stdout(predicate::str::contains("No tasks found"));
@@ -306,7 +318,7 @@ fn test_filter_annotate_no_matches() {
     
     // Filter that matches nothing
     new_cmd(&temp_dir)
-        .args(&["project:nonexistent", "annotate", "Note"])
+        .args(&["annotate", "project:nonexistent", "Note"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("No matching tasks found"));

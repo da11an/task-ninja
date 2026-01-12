@@ -26,7 +26,7 @@ fn acceptance_stack_auto_initialization_on_first_operation() {
     given.tasks_exist(&[1, 2, 3]);
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "show"]);
+    when.execute_success(&["clock", "list"]);
     
     let then = ThenBuilder::new(&ctx, when.result());
     then.stack_is_empty();
@@ -54,9 +54,9 @@ fn acceptance_enqueue_adds_to_end() {
     given.stack_is_empty();
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task1.to_string(), "enqueue"]);
-    when.execute_success(&[&task2.to_string(), "enqueue"]);
-    when.execute_success(&[&task3.to_string(), "enqueue"]);
+    when.execute_success(&["clock", "enqueue", &task1.to_string()]);
+    when.execute_success(&["clock", "enqueue", &task2.to_string()]);
+    when.execute_success(&["clock", "enqueue", &task3.to_string()]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task1, task2, task3]);
@@ -78,7 +78,7 @@ fn acceptance_clock_in_pushes_to_top() {
     given.stack_contains(&[task1, task2]);
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task3.to_string(), "clock", "in"]);
+    when.execute_success(&["clock", "in", "--task", &task3.to_string()]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task3, task1, task2]);
@@ -99,7 +99,7 @@ fn acceptance_stack_pick_moves_to_top() {
     given.stack_contains(&[task10, task11, task12]);
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "2", "pick"]);
+    when.execute_success(&["clock", "pick", "2"]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task12, task10, task11]);
@@ -120,7 +120,7 @@ fn acceptance_stack_roll_rotates() {
     given.stack_contains(&[task10, task11, task12]);
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "roll", "1"]);
+    when.execute_success(&["clock", "roll", "1"]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task11, task12, task10]);
@@ -149,7 +149,7 @@ fn acceptance_stack_roll_while_clock_running_switches_live_task() {
     // Note: We can't easily control the exact time of roll, but we can verify
     // that the session was closed and a new one started
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "roll", "1"]);
+    when.execute_success(&["clock", "roll", "1"]);
     
     let then = ThenBuilder::new(&ctx, None);
     // Roll should close task 10's session and start task 11's session
@@ -182,7 +182,7 @@ fn acceptance_stack_pick_while_stopped_does_not_create_sessions() {
     let sessions_before = SessionRepo::list_all(ctx.db()).unwrap().len();
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "2", "pick"]);
+    when.execute_success(&["clock", "pick", "2"]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task12, task10, task11])
@@ -276,7 +276,7 @@ fn acceptance_interval_end_time_amended_on_overlap() {
     given.closed_session_exists(task10, "2026-01-10T09:00", "2026-01-10T10:30");
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task11.to_string(), "clock", "in", "2026-01-10T09:45"]);
+    when.execute_success(&["clock", "in", "--task", &task11.to_string(), "2026-01-10T09:45"]);
     
     let then = ThenBuilder::new(&ctx, None);
     // Verify task 10's session was amended
@@ -394,7 +394,7 @@ fn acceptance_micro_purge_on_rapid_switch() {
     // Roll to task 11 - this should close task 10 and start task 11
     // We'll manually close task 11 to create a micro-session
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&["stack", "roll", "1"]);
+    when.execute_success(&["clock", "roll", "1"]);
     
     // Verify task 11 is running
     let then = ThenBuilder::new(&ctx, None);
@@ -502,8 +502,8 @@ fn acceptance_tag_add_remove() {
     let task10 = given.task_exists("Task 10");
     
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task10.to_string(), "modify", "+urgent", "+home"]);
-    when.execute_success(&[&task10.to_string(), "modify", "-home"]);
+    when.execute_success(&["modify", &task10.to_string(), "+urgent", "+home"]);
+    when.execute_success(&["modify", &task10.to_string(), "-home"]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.task_has_tag(task10, "urgent")

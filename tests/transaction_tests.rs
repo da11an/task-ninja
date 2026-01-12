@@ -217,7 +217,7 @@ fn test_no_partial_state_on_modify_failure() {
     
     // Try to modify with invalid project - should fail
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_failure(&[&task1.to_string(), "modify", "project:nonexistent"]);
+    when.execute_failure(&["modify", &task1.to_string(), "project:nonexistent"]);
     
     // Verify task is unchanged
     let final_task = TaskRepo::get_by_id(ctx.db(), task1).unwrap().unwrap();

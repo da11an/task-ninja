@@ -6,7 +6,6 @@ Complete reference for all Task Ninja commands with examples and usage patterns.
 
 - [Task Commands](#task-commands)
 - [Project Commands](#project-commands)
-- [Stack Commands](#stack-commands)
 - [Clock Commands](#clock-commands)
 - [Session Commands](#session-commands)
 - [Recurrence Commands](#recurrence-commands)
@@ -57,8 +56,6 @@ task add Customer call uda.client:acme uda.priority:high
 
 List tasks matching optional filter.
 
-**Note:** You can also use the filter-before-command pattern: `task <filter> list` (e.g., `task project:work list`)
-
 **Options:**
 - `--json` - Output in JSON format
 
@@ -68,20 +65,18 @@ List tasks matching optional filter.
 task list
 
 # List with filter
-task project:work list
-task +urgent list
-task status:pending list
+task list project:work
+task list +urgent
+task list status:pending
 
 # JSON output
 task list --json
-task project:work +urgent list --json
+task list project:work +urgent --json
 ```
 
-### `task <id|filter> modify [attributes...] [--yes] [--interactive]`
+### `task modify <id|filter> [attributes...] [--yes] [--interactive]`
 
 Modify one or more tasks.
-
-**Note:** You can also use: `task modify <id|filter> [attributes...]` (top-level form)
 
 **Options:**
 - `--yes` - Apply to all matching tasks without confirmation
@@ -90,33 +85,31 @@ Modify one or more tasks.
 **Examples:**
 ```bash
 # Modify single task
-task 10 modify +urgent due:+2d
+task modify 10 +urgent due:+2d
 
 # Modify multiple tasks (with confirmation)
-task project:work modify description:Updated description
+task modify project:work description:Updated description
 
 # Modify with --yes flag
-task +urgent modify due:+1d --yes
+task modify +urgent due:+1d --yes
 
 # Clear attributes
 task 10 modify project:none due:none allocation:none
 ```
 
-### `task [<id|filter>] done [--at <expr>] [--next] [--yes] [--interactive]`
+### `task done [<id|filter>] [--at <expr>] [--next] [--yes] [--interactive]`
 
 Complete one or more tasks.
-
-**Note:** You can also use: `task done [<id|filter>]` (top-level form)
 
 **Behavior:**
 1. Closes running session at `--at` or now
 2. Marks task as completed
-3. Removes from stack
-4. If `--next` and stack non-empty: starts session for new stack[0]
+3. Removes from clock stack
+4. If `--next` and clock stack non-empty: starts session for new clock[0]
 
 **Options:**
 - `--at <expr>` - End session at specific time
-- `--next` - Automatically start next task in stack
+- `--next` - Automatically start next task in clock stack
 - `--yes` - Complete all matching tasks without confirmation
 - `--interactive` - Confirm each task one by one
 
@@ -126,48 +119,78 @@ Complete one or more tasks.
 task done
 
 # Complete specific task
-task 10 done
+task done 10
 
 # Complete with --next
 task done --next
 
 # Complete at specific time
-task 10 done --at 17:00
+task done 10 --at 17:00
 
 # Complete multiple tasks
-task +urgent done --yes
+task done +urgent --yes
 ```
 
-### `task [<id>] annotate <note...>`
+### `task annotate <id|filter> <note...> [--delete <annotation_id>]`
 
-Add annotation to a task.
-
-**Note:** You can also use: `task annotate <note...>` (top-level form, requires task ID in filter or defaults to stack[0])
+Add or delete annotation to/from a task.
 
 **Behavior:**
-- If `<id>` provided: annotates specified task
-- If `<id>` omitted and clock running: annotates current task and links to session
-- If `<id>` omitted and clock not running: error
+- Annotates specified task
+- Links annotation to current session if clock is running
+
+**Options:**
+- `--delete <annotation_id>` - Delete a specific annotation
 
 **Examples:**
 ```bash
 # Annotate specific task
-task 10 annotate Found the bug in auth module
-
-# Annotate current task (if clocked in)
-task annotate Waiting for API response
+task annotate 10 Found the bug in auth module
 
 # Multiple words in annotation
-task 10 annotate This is a longer note with multiple words
+task annotate 10 This is a longer note with multiple words
+
+# Delete annotation
+task annotate 10 --delete 5
 ```
 
-### `task <id> annotate --delete <annotation_id>`
+### `task show <id|filter>`
 
-Delete a specific annotation.
+Show detailed summary of task(s).
 
 **Examples:**
 ```bash
-task 10 annotate --delete 5
+# Show single task
+task show 10
+
+# Show task range
+task show 1-3
+
+# Show task list
+task show 1,3,5
+
+# Show with filter
+task show project:work
+```
+
+### `task delete <id|filter> [--yes] [--interactive]`
+
+Permanently delete task(s).
+
+**Options:**
+- `--yes` - Delete all matching tasks without confirmation
+- `--interactive` - Confirm each task one by one
+
+**Examples:**
+```bash
+# Delete single task
+task delete 10
+
+# Delete with confirmation
+task delete 10 --yes
+
+# Delete multiple tasks
+task delete +old --yes
 ```
 
 ---
@@ -235,72 +258,68 @@ task projects archive old-project
 
 ---
 
-## Stack Commands
+## Clock Commands
 
-### `task stack show`
+The clock stack is a queue of tasks. The task at position 0 (clock[0]) is the "active" task. Clock operations (pick, roll, drop) affect which task is active. Clock in/out controls timing.
 
-Display the current stack.
+### `task clock list` / `task clock show`
 
-**Examples:**
-```bash
-task stack show
-```
+Display the current clock stack.
 
-### `task stack enqueue <id>` / `task <id> enqueue`
-
-Add task to end of stack (do it later).
-
-**Forms:**
-- `task stack enqueue <id>` (canonical form)
-- `task <id> enqueue` (syntactic sugar, equivalent)
+**Options:**
+- `--json` - Output in JSON format
 
 **Examples:**
 ```bash
-# Canonical form
-task stack enqueue 10
+# List clock stack
+task clock list
 
-# Syntactic sugar (equivalent)
-task 10 enqueue
-task 11 enqueue
+# Show clock stack (alias)
+task clock show
+
+# JSON output
+task clock list --json
 ```
 
-### `task stack pick <index>` / `task stack <index> pick`
+### `task clock enqueue <id>`
 
-Move task at position to top of stack.
-
-**Forms:**
-- `task stack pick <index>` (canonical form)
-- `task stack <index> pick` (alternative syntax, equivalent)
+Add task to end of clock stack (do it later).
 
 **Examples:**
 ```bash
-# Canonical form
-task stack pick 2
-
-# Alternative syntax (equivalent)
-task stack 2 pick
+task clock enqueue 10
+task clock enqueue 11
 ```
 
-### `task stack roll [<n>]`
+### `task clock pick <index>`
 
-Rotate stack by n positions (default: 1).
+Move task at position to top of clock stack.
+
+**Examples:**
+```bash
+task clock pick 2
+```
+
+### `task clock roll [<n>]`
+
+Rotate clock stack by n positions (default: 1).
 
 **Behavior:**
-- If clock is running: closes current session and starts new one for new stack[0]
-- If clock is not running: only reorders stack
+- If clock is running: closes current session and starts new one for new clock[0]
+- If clock is not running: only reorders clock stack
 
 **Examples:**
 ```bash
 # Rotate once
-task stack roll
+task clock roll
 
 # Rotate 2 positions
-task stack roll 2
+task clock roll 2
 ```
 
-### `task stack drop <index>` / `task stack <index> drop`
+### `task clock drop <index>`
 
-Remove task from stack at position.
+Remove task from clock stack at position.
 
 **Forms:**
 - `task stack drop <index>` (canonical form)
@@ -315,33 +334,23 @@ task stack drop 1
 task stack 1 drop
 ```
 
-### `task stack clear [--clock-out]`
+### `task clock clear`
 
-Clear all tasks from stack.
-
-**Options:**
-- `--clock-out` - Stop clock if running
+Clear all tasks from clock stack.
 
 **Examples:**
 ```bash
-task stack clear
-task stack clear --clock-out
+task clock clear
 ```
 
----
+### `task clock in [--task <id>] [<start>|<start..end>]`
 
-## Clock Commands
-
-### `task clock in [<start>|<start..end>]` / `task <id> clock in [<start>|<start..end>]`
-
-Start timing the current stack[0] task, or push a specific task to top and start timing.
-
-**Forms:**
-- `task clock in` (starts timing stack[0])
-- `task <id> clock in` (pushes task to top and starts timing)
+Start timing the current clock[0] task, or a specific task.
 
 **Behavior:**
-- If no arguments: starts at "now"
+- If `--task <id>` provided: pushes task to top and starts timing
+- If `--task` omitted: uses clock[0]
+- If no time arguments: starts at "now"
 - If single time: starts at specified time
 - If interval (`start..end`): creates closed session
 
@@ -350,37 +359,24 @@ If another session starts before the end time of a closed interval, the interval
 
 **Examples:**
 ```bash
-# Start now
+# Start now (uses clock[0])
 task clock in
 
-# Start at specific time
+# Start at specific time (uses clock[0])
 task clock in 09:00
 
-# Create closed interval
+# Create closed interval (uses clock[0])
 task clock in 09:00..11:00
 task clock in today..eod
 
 # Push task 5 to top and start timing
-task 5 clock in
-```
+task clock in --task 5
 
-Push task to stack[0] and start timing.
+# Push task 10 to top and start at specific time
+task clock in --task 10 09:00
 
-**Behavior:**
-- Moves task to top of stack
-- Closes existing session if running
-- Creates new session (open or closed interval)
-
-**Examples:**
-```bash
-# Push to top and start now
-task 10 clock in
-
-# Push to top and start at specific time
-task 10 clock in 09:00
-
-# Push to top and create interval
-task 10 clock in 09:00..11:00
+# Push task 10 to top and create interval
+task clock in --task 10 09:00..11:00
 ```
 
 ### `task clock out [<end>]`
@@ -400,17 +396,16 @@ task clock out 17:00
 
 ## Session Commands
 
-### `task [<id>] sessions list [--json]` / `task sessions list [--json]`
+### `task sessions list [--task <id|filter>] [--json]`
 
 List session history.
 
-**Note:** You can also use: `task <id> sessions list` or `task <filter> sessions list` to filter by task
-
 **Behavior:**
-- If `<id>` provided: lists sessions for specific task
-- If `<id>` omitted: lists all sessions
+- If `--task` provided: lists sessions for specific task or filter
+- If `--task` omitted: lists all sessions
 
 **Options:**
+- `--task <id|filter>` - Filter sessions by task ID or filter
 - `--json` - Output in JSON format
 
 **Examples:**
@@ -419,21 +414,20 @@ List session history.
 task sessions list
 
 # List sessions for specific task
-task 10 sessions list
+task sessions list --task 10
 
 # JSON output
 task sessions list --json
+task sessions list --task 10 --json
 ```
 
-### `task [<id>] sessions show` / `task sessions show`
+### `task sessions show [--task <id|filter>]`
 
 Show detailed session information.
 
-**Note:** You can also use: `task <id> sessions show` or `task <filter> sessions show` to filter by task
-
 **Behavior:**
-- If `<id>` provided: shows most recent session for task
-- If `<id>` omitted: shows current running session
+- If `--task` provided: shows most recent session for task or filter
+- If `--task` omitted: shows current running session
 
 **Examples:**
 ```bash
@@ -441,14 +435,14 @@ Show detailed session information.
 task sessions show
 
 # Show most recent session for task
-task 10 sessions show
+task sessions show --task 10
 ```
 
-### `task sessions <session_id> modify [start:<expr>] [end:<expr>] [--yes] [--force]`
+### `task sessions modify <session_id> [start:<expr>] [end:<expr>] [--yes] [--force]`
 
 Modify session start and/or end times.
 
-**Syntax:** Consistent with filter-before-verb pattern: `task <filter> <verb> <details>`
+**Syntax:** CLAP-native: `task sessions modify <session_id> [start:<expr>] [end:<expr>]`
 
 **Fields:**
 - `start:<expr>` - Modify start time (date expression)
@@ -506,11 +500,11 @@ Error: Session modification would create conflicts:
 Use --force to override (may require resolving conflicts manually).
 ```
 
-### `task sessions <session_id> delete [--yes]`
+### `task sessions delete <session_id> [--yes]`
 
 Delete a session.
 
-**Syntax:** Consistent with filter-before-verb pattern: `task <filter> <verb> <details>`
+**Syntax:** CLAP-native: `task sessions delete <session_id> [--yes]`
 
 **Options:**
 - `--yes` - Delete without confirmation
@@ -523,10 +517,10 @@ Delete a session.
 **Examples:**
 ```bash
 # Delete session (with confirmation)
-task sessions 5 delete
+task sessions delete 5
 
 # Delete session (without confirmation)
-task sessions 5 delete --yes
+task sessions delete 5 --yes
 ```
 
 **Confirmation Prompt:**
@@ -615,21 +609,21 @@ Filters support AND, OR, and NOT operations with implicit AND.
 
 ```bash
 # AND (implicit)
-task project:work +urgent list
-task status:pending due:tomorrow list
+task list project:work +urgent
+task list status:pending due:tomorrow
 
 # OR (explicit)
-task +urgent or +important list
-task project:work or project:home list
+task list +urgent or +important
+task list project:work or project:home
 
 # NOT
-task not +waiting list
-task not project:work list
+task list not +waiting
+task list not project:work
 
 # Complex filters
-task project:work +urgent or project:home +important list
-task status:pending not +waiting list
-task (project:work or project:home) +urgent list  # Note: parentheses not yet supported
+task list project:work +urgent or project:home +important
+task list status:pending not +waiting
+task list (project:work or project:home) +urgent  # Note: parentheses not yet supported
 ```
 
 ---

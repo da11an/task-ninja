@@ -26,7 +26,7 @@ fn e2e_complete_workflow_add_clock_annotate_done() {
     
     // Step 2: Add task to stack
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task_id.to_string(), "enqueue"]);
+    when.execute_success(&["clock", "enqueue", &task_id.to_string()]);
     
     // Step 3: Clock in
     when.execute_success(&["clock", "in"]);
@@ -70,7 +70,7 @@ fn e2e_complete_workflow_with_project_and_tags() {
     // Step 2: Add task with project and tags
     let task_id = given.task_exists("Review pull request");
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task_id.to_string(), "modify", "project:work", "+urgent", "+code-review"]);
+    when.execute_success(&["modify", &task_id.to_string(), "project:work", "+urgent", "+code-review"]);
     
     // Verify task has project and tags
     let then = ThenBuilder::new(&ctx, None);
@@ -79,11 +79,11 @@ fn e2e_complete_workflow_with_project_and_tags() {
         .task_has_tag(task_id, "code-review");
     
     // Step 3: Add to stack and clock in
-    when.execute_success(&[&task_id.to_string(), "enqueue"]);
+    when.execute_success(&["clock", "enqueue", &task_id.to_string()]);
     when.execute_success(&["clock", "in"]);
     
     // Step 4: Add annotation
-    when.execute_success(&[&task_id.to_string(), "annotate", "Found 3 issues to address"]);
+    when.execute_success(&["annotate", &task_id.to_string(), "Found 3 issues to address"]);
     
     // Step 5: Complete task
     when.execute_success(&["done"]);
@@ -112,9 +112,9 @@ fn e2e_complete_workflow_with_done_next() {
     
     // Step 2: Add all to stack
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task1.to_string(), "enqueue"]);
-    when.execute_success(&[&task2.to_string(), "enqueue"]);
-    when.execute_success(&[&task3.to_string(), "enqueue"]);
+    when.execute_success(&["clock", "enqueue", &task1.to_string()]);
+    when.execute_success(&["clock", "enqueue", &task2.to_string()]);
+    when.execute_success(&["clock", "enqueue", &task3.to_string()]);
     
     // Step 3: Clock in (starts task 1)
     when.execute_success(&["clock", "in"]);
@@ -164,9 +164,9 @@ fn e2e_complex_filter_scenarios() {
     
     // Add tags
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_success(&[&task1.to_string(), "modify", "+urgent", "+important"]);
-    when.execute_success(&[&task2.to_string(), "modify", "+important"]);
-    when.execute_success(&[&task3.to_string(), "modify", "+urgent"]);
+    when.execute_success(&["modify", &task1.to_string(), "+urgent", "+important"]);
+    when.execute_success(&["modify", &task2.to_string(), "+important"]);
+    when.execute_success(&["modify", &task3.to_string(), "+urgent"]);
     
     // Set due dates
     let tomorrow_ts = date::parse_date_expr("tomorrow").unwrap();
@@ -509,7 +509,7 @@ fn e2e_multi_task_modify_workflow() {
     let mut when = WhenBuilder::new(&ctx);
     // Use --yes to avoid interactive prompt in test
     // Note: description modification syntax is just the new description text
-    when.execute_success(&["+urgent", "modify", "Updated urgent task", "--yes"]);
+    when.execute_success(&["modify", "+urgent", "Updated urgent task", "--yes"]);
     
     // Verify tasks 1 and 2 were modified, task 3 was not
     let task1_updated = TaskRepo::get_by_id(ctx.db(), task1).unwrap().unwrap();

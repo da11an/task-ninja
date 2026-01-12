@@ -9,7 +9,7 @@ A powerful command-line task management tool built with Rust and SQLite - your s
 - **Tags**: Flexible tagging system with `+tag` / `-tag` syntax
 - **Scheduling**: Due dates, scheduled dates, and wait times
 - **Time Tracking**: Built-in clock with session tracking
-- **Stack Management**: Work queue with "do it now" vs "do it later" semantics
+- **Clock Stack**: Work queue with "do it now" vs "do it later" semantics
 - **Recurrence**: Recurring tasks with templates and flexible recurrence rules
 - **UDAs**: User-defined attributes for custom task properties
 - **Annotations**: Timestamped notes linked to tasks and sessions
@@ -48,11 +48,11 @@ For local testing without installing globally:
 cargo build --release
 
 # Use directly
-./target/release/task stack show
+./target/release/task clock list
 
 # Or create an alias in your current shell
 alias tn='./target/release/task'
-tn stack show
+tn clock list
 ```
 
 See `INSTALL.md` for more detailed installation options and conflict resolution with Taskwarrior.
@@ -65,24 +65,25 @@ task add fix the bug project:work +urgent
 
 # List tasks
 task list
-task project:work list
-task +urgent list
+task list project:work
+task list +urgent
 
 # Start working on a task (do it now)
-task 10 clock in
+task clock in --task 10  # or: task clock in (uses clock[0])
 
 # Add task to queue (do it later)
-task 11 enqueue  # or: task stack enqueue 11
+task clock enqueue 11
 
 # Add annotation while working
-task annotate Found the issue in auth module
+task annotate 10 Found the issue in auth module
 
 # Complete a task
-task done
+task done  # or: task done 10
 
 # View session history
 task sessions list
-task 10 sessions show
+task sessions list --task 10
+task sessions show --task 10
 ```
 
 ## Database
@@ -104,20 +105,19 @@ The database is created automatically on first use.
 task add Review PR project:work +code due:tomorrow
 
 # Modify task
-task 10 modify +urgent due:+2d
+task modify 10 +urgent due:+2d
 
 # List with filters
-task project:work +urgent list
-task +urgent or +important list
-task not +waiting list
+task list project:work +urgent
+task list +urgent or +important
+task list not +waiting
 
 # Annotate task
-task 10 annotate Started investigation
-task annotate  # If clocked in, annotates current task
+task annotate 10 Started investigation
 
 # Complete task
 task done  # Completes current task (if clocked in)
-task 10 done
+task done 10
 ```
 
 ### Projects
@@ -138,27 +138,28 @@ task projects rename work office
 task projects archive old-project
 ```
 
-### Stack and Clock
+### Clock Stack
 
 ```bash
-# View stack
-task stack show
+# View clock stack
+task clock list  # or: task clock show
 
 # Do it now: push to top and start clock
-task 10 clock in
+task clock in --task 10  # or: task clock in (uses clock[0])
 
 # Do it later: add to end of queue
-task 11 enqueue
+task clock enqueue 11
 
-# Manage stack
-task stack 2 pick    # Move position 2 to top
-task stack roll      # Rotate once
-task stack 1 drop    # Remove from position 1
-task stack clear     # Clear all
+# Manage clock stack
+task clock pick 2    # Move position 2 to top
+task clock roll      # Rotate once
+task clock drop 1    # Remove from position 1
+task clock clear     # Clear all
 
 # Clock operations
-task clock in                    # Start current stack[0]
-task clock in 09:00..11:00      # Create closed interval
+task clock in                    # Start current clock[0]
+task clock in 09:00..11:00      # Create closed interval (uses clock[0])
+task clock in --task 10 09:00..11:00  # Create closed interval for specific task
 task clock out                   # Stop current session
 ```
 
@@ -169,28 +170,29 @@ task clock out                   # Stop current session
 task sessions list
 
 # List sessions for specific task
-task 10 sessions list
+task sessions list --task 10
 
 # Show current session
 task sessions show
 
 # Show most recent session for task
-task 10 sessions show
+task sessions show --task 10
 
 # Modify session start/end times
-task sessions 5 modify start:09:00
-task sessions 5 modify end:17:00
-task sessions 5 modify start:09:00 end:17:00
+task sessions modify 5 start:09:00
+task sessions modify 5 end:17:00
+task sessions modify 5 start:09:00 end:17:00
 
 # Close an open session
-task sessions 5 modify end:now
+task sessions modify 5 end:now
 
 # Make a closed session open (clear end time)
-task sessions 5 modify end:none
+task sessions modify 5 end:none
 
 # Delete a session
-task sessions 5 delete
-task sessions 5 delete --yes
+task sessions delete 5
+task sessions delete 5 --yes
+```
 ```
 
 ### Recurrence
@@ -212,17 +214,17 @@ Filters support AND, OR, and NOT operations:
 
 ```bash
 # AND (implicit)
-task project:work +urgent list
+task list project:work +urgent
 
 # OR (explicit)
-task +urgent or +important list
+task list +urgent or +important
 
 # NOT
-task not +waiting list
+task list not +waiting
 
 # Complex filters
-task project:work +urgent or project:home +important list
-task status:pending not +waiting list
+task list project:work +urgent or project:home +important
+task list status:pending not +waiting
 ```
 
 ## Configuration

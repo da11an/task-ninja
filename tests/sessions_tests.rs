@@ -27,11 +27,11 @@ fn test_sessions_list_all() {
     get_task_cmd().args(&["add", "Task 2"]).assert().success();
     
     // Create sessions
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
-    get_task_cmd().args(&["2", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "2"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -51,16 +51,16 @@ fn test_sessions_list_for_task() {
     get_task_cmd().args(&["add", "Task 2"]).assert().success();
     
     // Create sessions
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
-    get_task_cmd().args(&["2", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "2"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
     // List sessions for task 1
-    get_task_cmd().args(&["1", "sessions", "list"]).assert().success()
+    get_task_cmd().args(&["sessions", "list", "--task", "1"]).assert().success()
         .stdout(predicates::str::contains("Task 1"));
     
     drop(temp_dir);
@@ -72,7 +72,7 @@ fn test_sessions_show_current() {
     
     // Create task and start session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     
     // Show current session
@@ -88,12 +88,12 @@ fn test_sessions_show_for_task() {
     
     // Create task and session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
     // Show most recent session for task
-    get_task_cmd().args(&["1", "sessions", "show"]).assert().success()
+    get_task_cmd().args(&["sessions", "show", "--task", "1"]).assert().success()
         .stdout(predicates::str::contains("Task 1"));
     
     drop(temp_dir);
@@ -105,7 +105,7 @@ fn test_sessions_list_json() {
     
     // Create task and session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -122,7 +122,7 @@ fn test_sessions_list_shows_session_id() {
     
     // Create task and session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -139,7 +139,7 @@ fn test_sessions_modify_start_time() {
     
     // Create task and closed session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -151,7 +151,7 @@ fn test_sessions_modify_start_time() {
     
     // Modify start time
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "start:09:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "start:09:00", "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -165,7 +165,7 @@ fn test_sessions_modify_end_time() {
     
     // Create task and closed session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -177,7 +177,7 @@ fn test_sessions_modify_end_time() {
     
     // Modify end time
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "end:17:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "end:17:00", "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -191,7 +191,7 @@ fn test_sessions_modify_both_times() {
     
     // Create task and closed session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -203,7 +203,7 @@ fn test_sessions_modify_both_times() {
     
     // Modify both start and end times
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "start:09:00", "end:17:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "start:09:00", "end:17:00", "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -217,7 +217,7 @@ fn test_sessions_modify_end_none() {
     
     // Create task and closed session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -229,7 +229,7 @@ fn test_sessions_modify_end_none() {
     
     // Make session open (clear end time)
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "end:none", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "end:none", "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -249,7 +249,7 @@ fn test_sessions_modify_end_now() {
     
     // Create task and open session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     
     // Get session ID from list
@@ -260,7 +260,7 @@ fn test_sessions_modify_end_now() {
     
     // Close session (set end to now)
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "end:now", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "end:now", "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -280,7 +280,7 @@ fn test_sessions_modify_invalid_session_id() {
     
     // Try to modify non-existent session
     get_task_cmd()
-        .args(&["sessions", "999", "modify", "start:09:00", "--yes"])
+        .args(&["sessions", "modify", "999", "start:09:00", "--yes"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("not found"));
@@ -294,7 +294,7 @@ fn test_sessions_modify_running_session_end_none() {
     
     // Create task and open session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     
     // Get session ID from list
@@ -305,7 +305,7 @@ fn test_sessions_modify_running_session_end_none() {
     
     // Try to clear end time of running session (should fail)
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "modify", "end:none", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "end:none", "--yes"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("already open"));
@@ -322,12 +322,12 @@ fn test_sessions_modify_overlap_detection() {
     get_task_cmd().args(&["add", "Task 2"]).assert().success();
     
     // Create first session: 09:00-11:00
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in", "09:00"]).assert().success();
     get_task_cmd().args(&["clock", "out", "11:00"]).assert().success();
     
     // Create second session: 10:00-12:00 (overlaps with first: 10:00-11:00)
-    get_task_cmd().args(&["2", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "2"]).assert().success();
     get_task_cmd().args(&["clock", "in", "10:00"]).assert().success();
     get_task_cmd().args(&["clock", "out", "12:00"]).assert().success();
     
@@ -340,7 +340,7 @@ fn test_sessions_modify_overlap_detection() {
     // Try to modify second session to start at 09:00 (would overlap with first session 09:00-11:00)
     // This should fail without --force because it would overlap with first session
     get_task_cmd()
-        .args(&["sessions", &session2_id.to_string(), "modify", "start:09:00", "--yes"])
+        .args(&["sessions", "modify", &session2_id.to_string(), "start:09:00", "--yes"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("conflicts"));
@@ -357,12 +357,12 @@ fn test_sessions_modify_overlap_force() {
     get_task_cmd().args(&["add", "Task 2"]).assert().success();
     
     // Create first session: 09:00-11:00
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in", "09:00"]).assert().success();
     get_task_cmd().args(&["clock", "out", "11:00"]).assert().success();
     
     // Create second session: 10:00-12:00 (overlaps with first: 10:00-11:00)
-    get_task_cmd().args(&["2", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "2"]).assert().success();
     get_task_cmd().args(&["clock", "in", "10:00"]).assert().success();
     get_task_cmd().args(&["clock", "out", "12:00"]).assert().success();
     
@@ -374,7 +374,7 @@ fn test_sessions_modify_overlap_force() {
     
     // Modify with --force (should succeed despite conflicts)
     get_task_cmd()
-        .args(&["sessions", &session2_id.to_string(), "modify", "start:09:00", "--yes", "--force"])
+        .args(&["sessions", "modify", &session2_id.to_string(), "start:09:00", "--yes", "--force"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -388,7 +388,7 @@ fn test_sessions_delete() {
     
     // Create task and closed session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     get_task_cmd().args(&["clock", "out"]).assert().success();
     
@@ -400,7 +400,7 @@ fn test_sessions_delete() {
     
     // Delete session
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "delete", "--yes"])
+        .args(&["sessions", "delete", &session_id.to_string(), "--yes"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Deleted session"));
@@ -420,7 +420,7 @@ fn test_sessions_delete_invalid_session_id() {
     
     // Try to delete non-existent session
     get_task_cmd()
-        .args(&["sessions", "999", "delete", "--yes"])
+        .args(&["sessions", "delete", "999", "--yes"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("not found"));
@@ -434,7 +434,7 @@ fn test_sessions_delete_running_session() {
     
     // Create task and open session
     get_task_cmd().args(&["add", "Task 1"]).assert().success();
-    get_task_cmd().args(&["1", "enqueue"]).assert().success();
+    get_task_cmd().args(&["clock", "enqueue", "1"]).assert().success();
     get_task_cmd().args(&["clock", "in"]).assert().success();
     
     // Get session ID from list
@@ -445,7 +445,7 @@ fn test_sessions_delete_running_session() {
     
     // Try to delete running session (should fail)
     get_task_cmd()
-        .args(&["sessions", &session_id.to_string(), "delete", "--yes"])
+        .args(&["sessions", "delete", &session_id.to_string(), "--yes"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("running session"));

@@ -36,8 +36,14 @@ Drop `task clock show` alias. We want to have a tight syntax with one right way 
 - Number of tasks overdue, if none, when tasks will become overdue based on ...
 - Etc.
 
-### 10. `task list` provide multiple views as arguments
+### 10. `task list` provide multiple views as arguments, group by and sort by options
 
-- Project organized view
+- Group by Project view (complex group by representing nestings)
+- Group by Kanban-like stage, and allow marking stage, like reviewed, etc, if done is not binary
+- Group by timeliness status (overdue, future due date, timely completion threatened based on allocated vs session duration vs daily moving average of sum of sessions (recency biased)
 - Priority score organized view (develop priority score)
-- Sort flags (choose a column)
+- Sort flags (choose a column), sorts within groups if grouped
+
+### 11. Add a plot or show option for every list option
+
+### 12. Support more statuses, and list by status 

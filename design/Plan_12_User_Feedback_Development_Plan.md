@@ -1,0 +1,592 @@
+# Plan 12: User Feedback Development Plan
+
+## Overview
+
+This document transforms user feedback into actionable development plans, categorized by complexity and impact. Each item includes implementation checklists, design considerations, and refinements to ensure alignment with the CLAP-native grammar direction.
+
+---
+
+## Minor Changes (Quick Wins)
+
+These are straightforward improvements that enhance usability without major architectural changes.
+
+---
+
+### 1. Drop `task clock show` alias, enhance `task clock list` display
+
+**Status:** Minor Change  
+**Priority:** High  
+**Estimated Effort:** 2-4 hours
+
+**Current State:**
+- `task clock list` and `task clock show` both exist (show is alias)
+- Display shows minimal info: `[0] Task 2` format
+- Hard to identify tasks without context
+
+**Requested Changes:**
+1. Remove `Show` variant from `ClockCommands` enum
+2. Enhance `task clock list` to show full task details (same columns as `task list`)
+3. Add clock stack position column as first column
+4. Sort by clock stack position
+
+**Design Considerations:**
+- Maintains "one right way" philosophy (Pythonic)
+- Aligns with CLAP-native grammar (no aliases)
+- Improves usability without breaking changes
+
+**Implementation Checklist:**
+- [ ] Remove `Show` variant from `ClockCommands` enum in `src/cli/commands.rs`
+- [ ] Update `handle_clock` to remove `Show` case handling
+- [ ] Modify `format_stack_display` or create new `format_clock_list_table` function
+- [ ] Reuse `format_task_list_table` logic but add position column
+- [ ] Fetch full task details for clock stack items
+- [ ] Update `handle_clock` `List` case to use new formatting
+- [ ] Update `docs/COMMAND_REFERENCE.md` to remove `show` references
+- [ ] Update tests that use `clock show` to use `clock list`
+- [ ] Test: Verify `clock show` no longer works
+- [ ] Test: Verify `clock list` shows full task details with position
+
+**Files to Modify:**
+- `src/cli/commands.rs` (remove Show variant, update handler)
+- `src/cli/output.rs` (new formatting function)
+- `docs/COMMAND_REFERENCE.md` (remove show documentation)
+- `tests/*.rs` (update test commands)
+
+---
+
+### 2. Add allocation column to `task list`
+
+**Status:** Minor Change  
+**Priority:** Medium  
+**Estimated Effort:** 1-2 hours
+
+**Current State:**
+- `task list` shows: ID, Description, Status, Project, Tags, Due
+- Allocation exists in task model but not displayed
+
+**Requested Changes:**
+- Add "Allocation" column to `task list` output
+- Display formatted duration (e.g., "2h 30m")
+
+**Implementation Checklist:**
+- [ ] Update `format_task_list_table` in `src/cli/output.rs`
+- [ ] Add allocation column width calculation
+- [ ] Add allocation to header row
+- [ ] Format allocation using `format_duration` helper
+- [ ] Test: Verify allocation displays correctly
+- [ ] Test: Verify empty allocation shows as blank
+
+**Files to Modify:**
+- `src/cli/output.rs`
+
+---
+
+### 3. Apply filtering to `task sessions list`
+
+**Status:** Minor Change  
+**Priority:** Medium  
+**Estimated Effort:** 2-3 hours
+
+**Current State:**
+- `task sessions list` accepts no filter arguments
+- `task list` supports filter arguments
+
+**Requested Changes:**
+- Add filter argument support to `task sessions list`
+- Use same filter syntax as `task list`
+- Filter sessions by task attributes (project, tags, etc.)
+
+**Design Considerations:**
+- Sessions are linked to tasks, so filtering should work on task attributes
+- Should reuse existing filter parsing logic
+
+**Implementation Checklist:**
+- [ ] Update `SessionsCommands::List` to accept filter arguments
+- [ ] Modify `handle_task_sessions_list` to parse and apply filters
+- [ ] Reuse `parse_filter` and `filter_tasks` from filter module
+- [ ] Join sessions with tasks for filtering
+- [ ] Update `docs/COMMAND_REFERENCE.md` with filter examples
+- [ ] Test: Filter by project
+- [ ] Test: Filter by tags
+- [ ] Test: Filter by task ID range
+- [ ] Test: Verify empty results message
+
+**Files to Modify:**
+- `src/cli/commands.rs` (update SessionsCommands::List)
+- `src/cli/commands_sessions.rs` (update handler)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+### 4. Allow `task done` without clock requirement
+
+**Status:** Minor Change (Bug Fix / Behavior Change)  
+**Priority:** High  
+**Estimated Effort:** 2-3 hours
+
+**Current State:**
+- `task done` requires task to be clocked in (running session)
+- Error: "No matching tasks with running sessions found."
+
+**Requested Changes:**
+- Allow marking tasks as done even if not clocked in
+- If no session exists, just mark task as completed (no session to close)
+- If session exists, close it and mark as done (current behavior)
+
+**Design Considerations:**
+- This is a reasonable UX improvement - users should be able to check off tasks regardless of clock state
+- Maintains backward compatibility (existing behavior still works)
+- Simplifies mental model: "done" means task is complete, not "done with timing"
+
+**Implementation Checklist:**
+- [ ] Modify `handle_task_done` in `src/cli/commands.rs`
+- [ ] Remove requirement for running session when task ID/filter provided
+- [ ] Keep session closing logic when session exists
+- [ ] Update error messages to be more permissive
+- [ ] Update `docs/COMMAND_REFERENCE.md` to clarify behavior
+- [ ] Test: `task done <id>` without clock works
+- [ ] Test: `task done <id>` with clock still closes session
+- [ ] Test: `task done` (no ID) still requires clock[0] and session (unchanged)
+- [ ] Test: Multiple tasks with `--yes` flag
+
+**Files to Modify:**
+- `src/cli/commands.rs` (handle_task_done function)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+### 5. Simplify `task clock in` syntax
+
+**Status:** Minor Change (with design challenge)  
+**Priority:** Medium  
+**Estimated Effort:** 3-4 hours
+
+**Current State:**
+- `task clock in --task <id>` is verbose
+- `task clock in` (no args) uses clock[0]
+
+**Requested Changes:**
+- Allow `task clock in <id>` (positional argument)
+- Remove need for `--task` flag
+
+**Design Challenge:**
+- **Ambiguity concern:** What if `<id>` is a clock stack position vs task ID?
+  - Current: `task clock pick <index>` uses position
+  - Proposed: `task clock in <id>` - is this position or task ID?
+- **Resolution Options:**
+  1. **Always treat as task ID** (recommended)
+     - Pros: More intuitive, task IDs are primary identifiers
+     - Cons: Can't clock in by position (but can use `pick` then `in`)
+  2. **Disambiguate by value range**
+     - Pros: Supports both use cases
+     - Cons: Fragile, confusing (what if task ID is small number?)
+  3. **Use flag for position**: `task clock in --position <index>`
+     - Pros: Explicit, no ambiguity
+     - Cons: Still requires flag for position case
+
+**Recommendation:**
+- **Option 1 (Always task ID)** - This is the most intuitive and aligns with user expectation
+- If user wants to clock in by position, they can: `task clock pick <index> && task clock in`
+- This maintains clarity and reduces cognitive load
+
+**Implementation Checklist:**
+- [ ] Update `ClockCommands::In` to accept optional positional `task_id` argument
+- [ ] Remove `--task` flag from `Clock` command (or deprecate)
+- [ ] Update `handle_clock` to prioritize positional over flag
+- [ ] Update `docs/COMMAND_REFERENCE.md` with new syntax
+- [ ] Test: `task clock in <id>` works
+- [ ] Test: `task clock in` (no args) still uses clock[0]
+- [ ] Test: Verify `--task` flag still works (backward compat) or remove
+- [ ] Update all tests using `--task` flag
+
+**Files to Modify:**
+- `src/cli/commands.rs` (ClockCommands::In, handle_clock)
+- `docs/COMMAND_REFERENCE.md`
+- `tests/*.rs` (update test commands)
+
+---
+
+### 6. Add `--clock-in` flag to `task add`
+
+**Status:** Minor Change  
+**Priority:** Low  
+**Estimated Effort:** 2-3 hours
+
+**Current State:**
+- `task add` creates task but doesn't clock in
+- User must run: `task add ... && task clock in <id>`
+
+**Requested Changes:**
+- Add `--clock-in` flag to `task add`
+- After creating task, automatically clock in
+
+**Design Considerations:**
+- Simple flag addition, no ambiguity
+- Useful for "do it now" workflow
+- Aligns with CLAP-native grammar
+
+**Implementation Checklist:**
+- [ ] Add `--clock-in` flag to `Add` command in `src/cli/commands.rs`
+- [ ] Modify `handle_task_add` to check flag
+- [ ] After task creation, call clock in logic
+- [ ] Update `docs/COMMAND_REFERENCE.md` with example
+- [ ] Test: `task add "description" --clock-in` clocks in new task
+- [ ] Test: `task add "description"` (no flag) doesn't clock in
+- [ ] Test: Verify task is pushed to clock[0] when flag used
+
+**Files to Modify:**
+- `src/cli/commands.rs` (Add command, handle_task_add)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+## Medium Features (Moderate Complexity)
+
+These require more implementation work but don't fundamentally change the architecture.
+
+---
+
+### 7. Interactive project/tag creation during task creation
+
+**Status:** Medium Feature  
+**Priority:** Medium  
+**Estimated Effort:** 4-6 hours
+
+**Current State:**
+- `task add project:newproject` fails if project doesn't exist
+- User must create project first: `task projects add newproject`
+
+**Requested Changes:**
+- Detect when project/tag doesn't exist during task creation
+- Prompt user: "This is a new project 'newproject'. Add new project? [y/n/c]"
+- `y` = create project and continue
+- `n` = skip project, create task without it
+- `c` = cancel task creation (default)
+
+**Design Considerations:**
+- Should also apply to tags (though tags are simpler - just strings)
+- Fuzzy matching for "similar to existing project" would be nice but optional
+- Confirmation prompt should be clear and non-blocking for scripts (consider `--yes` flag)
+
+**Refinement:**
+- **Fuzzy matching is nice-to-have, not required for MVP**
+- Focus on project creation first, tags can be added later
+- Consider `--auto-create-project` flag for non-interactive use
+
+**Implementation Checklist:**
+- [ ] Modify `parse_task_args` to detect unknown projects
+- [ ] Add interactive prompt function for project creation
+- [ ] Integrate prompt into `handle_task_add` flow
+- [ ] Handle `y`/`n`/`c` responses
+- [ ] Create project if confirmed
+- [ ] Update task args with created project
+- [ ] Add `--auto-create-project` flag for non-interactive mode
+- [ ] Update `docs/COMMAND_REFERENCE.md` with examples
+- [ ] Test: Interactive prompt appears for new project
+- [ ] Test: `y` creates project and task
+- [ ] Test: `n` creates task without project
+- [ ] Test: `c` cancels task creation
+- [ ] Test: `--auto-create-project` skips prompt
+- [ ] **Future:** Add tag creation support
+
+**Files to Modify:**
+- `src/cli/parser.rs` (detect unknown projects)
+- `src/cli/commands.rs` (handle_task_add, interactive prompt)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+## Major Features (Significant Development)
+
+These require substantial design and implementation work, potentially new subsystems.
+
+---
+
+### 8. Tab completion instead of abbreviations
+
+**Status:** Major Feature  
+**Priority:** Low (Nice to have)  
+**Estimated Effort:** 8-12 hours
+
+**Current State:**
+- Abbreviation expansion via pre-clap parsing
+- Users type `task l` and it expands to `task list`
+
+**Requested Changes:**
+- Remove abbreviation expansion
+- Implement shell completion (bash, zsh, fish)
+- Support completion for: commands, subcommands, project names, filters, task IDs
+
+**Design Considerations:**
+- **Challenges abbreviation removal:** User explicitly requested keeping abbreviations in Plan 11
+- **Recommendation:** Keep abbreviations for now, add completion as enhancement
+- Completion and abbreviations can coexist
+- Completion is more "natural" but requires shell setup
+
+**Refinement:**
+- **Don't remove abbreviations yet** - this conflicts with Plan 11 decision
+- **Add completion as optional enhancement** - users can enable if desired
+- Focus on most common completions first: commands, projects, task IDs
+
+**Implementation Checklist:**
+- [ ] Research `clap_complete` crate for completion generation
+- [ ] Generate completion scripts for bash/zsh/fish
+- [ ] Add `task completion <shell>` command to generate scripts
+- [ ] Document installation in `INSTALL.md`
+- [ ] Test: Command completion works
+- [ ] Test: Project name completion works
+- [ ] Test: Task ID completion works (limited - may be slow)
+- [ ] **Keep abbreviation expansion** (don't remove)
+
+**Files to Create/Modify:**
+- `src/cli/commands.rs` (add completion command)
+- `INSTALL.md` (completion setup)
+- `docs/COMMAND_REFERENCE.md` (completion docs)
+
+---
+
+### 9. Dashboard/status command
+
+**Status:** Major Feature  
+**Priority:** High  
+**Estimated Effort:** 12-16 hours
+
+**Current State:**
+- Status lines appear in individual commands
+- No centralized view of system state
+
+**Requested Changes:**
+- New `task status` or `task dashboard` command
+- Remove status lines from individual commands
+- Dashboard shows:
+  - Clock status (in/out, current task, duration)
+  - Top 3 tasks from clock stack
+  - Top 3 priority tasks NOT on clock stack
+  - Session summary for today
+  - Overdue tasks count (or next overdue date)
+
+**Design Considerations:**
+- **This is a great idea** - consolidates information, reduces noise
+- Should be fast (cache if needed)
+- Configurable what to show (future: `--sections` flag)
+- Priority calculation needs definition (due date? allocation? user-defined?)
+
+**Refinement:**
+- **Start with MVP:** Clock status, clock stack (top 3), today's sessions, overdue count
+- **Priority calculation:** Start simple (due date proximity), can enhance later
+- **Status line removal:** Do this after dashboard is proven useful
+
+**Implementation Checklist:**
+- [ ] Create `Status` or `Dashboard` command variant
+- [ ] Implement `handle_status` function
+- [ ] Query clock state and current task
+- [ ] Query top 3 clock stack tasks with details
+- [ ] Query today's session summary (total time, count)
+- [ ] Query overdue tasks (due_ts < now && status = pending)
+- [ ] Calculate "next overdue" if none overdue
+- [ ] Format dashboard output (sections, tables)
+- [ ] Add `--json` flag for machine-readable output
+- [ ] Update `docs/COMMAND_REFERENCE.md`
+- [ ] Test: Dashboard shows all sections
+- [ ] Test: Empty states handled gracefully
+- [ ] Test: Performance is acceptable (< 100ms)
+- [ ] **Future:** Remove status lines from other commands
+- [ ] **Future:** Add priority calculation
+- [ ] **Future:** Add `--sections` flag to show/hide sections
+
+**Files to Create/Modify:**
+- `src/cli/commands.rs` (Status command, handle_status)
+- `src/cli/output.rs` (format_dashboard function)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+### 10. Multiple views for `task list` (group by, sort by)
+
+**Status:** Major Feature  
+**Priority:** Medium  
+**Estimated Effort:** 20-30 hours
+
+**Current State:**
+- `task list` shows flat table, sorted by ID (default)
+
+**Requested Changes:**
+- Group by options:
+  - Project (with nesting support)
+  - Kanban-like stage (requires status system expansion - see #12)
+  - Timeliness status (overdue, future, threatened)
+  - Priority score
+- Sort by options:
+  - Any column (ID, description, due, allocation, etc.)
+  - Sorts within groups if grouped
+
+**Design Considerations:**
+- **This is complex** - requires significant refactoring of list display
+- **Kanban stages depend on #12** (more statuses) - defer that part
+- **Priority score needs definition** - start with simple (due date + allocation)
+- **Timeliness calculation is complex** - start with simple (overdue vs not)
+
+**Refinement:**
+- **Phase 1 (MVP):** Sort by column, group by project
+- **Phase 2:** Group by timeliness (simple: overdue/not overdue)
+- **Phase 3:** Priority score calculation
+- **Phase 4:** Kanban stages (depends on #12)
+- **Phase 5:** Complex timeliness (threatened calculation)
+
+**Implementation Checklist - Phase 1:**
+- [ ] Add `--sort-by <column>` flag to `List` command
+- [ ] Add `--group-by project` flag to `List` command
+- [ ] Refactor `format_task_list_table` to support sorting
+- [ ] Implement project grouping logic
+- [ ] Handle nested project display (indentation)
+- [ ] Update `docs/COMMAND_REFERENCE.md`
+- [ ] Test: Sort by due date
+- [ ] Test: Sort by allocation
+- [ ] Test: Group by project
+- [ ] Test: Sort within groups
+
+**Implementation Checklist - Phase 2:**
+- [ ] Add `--group-by timeliness` flag
+- [ ] Implement simple timeliness: overdue vs not overdue
+- [ ] Test: Group by timeliness
+
+**Implementation Checklist - Phase 3:**
+- [ ] Define priority score formula
+- [ ] Calculate priority for each task
+- [ ] Add `--group-by priority` flag
+- [ ] Test: Priority grouping
+
+**Files to Modify:**
+- `src/cli/commands.rs` (List command flags)
+- `src/cli/output.rs` (refactor formatting, add grouping logic)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+### 11. Plot/visualization for list views
+
+**Status:** Major Feature  
+**Priority:** Low  
+**Estimated Effort:** 16-24 hours
+
+**Current State:**
+- All output is text-based tables
+
+**Requested Changes:**
+- Add `--plot` or `--show` option to list commands
+- Generate visualizations (charts, graphs)
+
+**Design Considerations:**
+- **This is a significant feature** - requires charting library
+- **What to plot?** Time series (sessions over time), distribution (allocation), etc.
+- **Output format:** ASCII art? SVG? Terminal-friendly?
+- **Dependencies:** Would need a plotting crate (plotters, etc.)
+
+**Refinement:**
+- **Defer this** - focus on core functionality first
+- **Consider ASCII art for MVP** - no external dependencies
+- **Future:** Could generate SVG/PNG for export
+
+**Implementation Checklist (Future):**
+- [ ] Research plotting libraries (plotters, etc.)
+- [ ] Add `--plot` flag to `List` command
+- [ ] Implement time series plot (sessions over time)
+- [ ] Implement allocation distribution
+- [ ] Test: Plot generation works
+- [ ] **Defer to later phase**
+
+**Files to Modify:**
+- `Cargo.toml` (add plotting dependency)
+- `src/cli/commands.rs` (add plot flag)
+- `src/cli/output.rs` (plot generation)
+
+---
+
+### 12. Support more statuses and list by status
+
+**Status:** Major Feature  
+**Priority:** Medium  
+**Estimated Effort:** 12-20 hours
+
+**Current State:**
+- Three statuses: `pending`, `completed`, `deleted`
+- No way to list by status (though filtering could work)
+
+**Requested Changes:**
+- Add more statuses (e.g., `reviewed`, `in-progress`, `blocked`, etc.)
+- Support listing/filtering by status
+
+**Design Considerations:**
+- **This affects database schema** - need migration
+- **Status vs tags?** Some overlap - need to clarify use cases
+- **Kanban stages (#10)** depend on this
+- **Backward compatibility:** Existing tasks have `pending`/`completed`/`deleted`
+
+**Refinement:**
+- **Start with simple expansion:** Add `in-progress`, `blocked`, `reviewed`
+- **Keep existing statuses** for backward compatibility
+- **Status vs tags:** Status = workflow state, tags = categorization
+- **Migration strategy:** All existing `pending` stay `pending`, add new statuses as needed
+
+**Implementation Checklist:**
+- [ ] Design new status enum values
+- [ ] Create database migration to add new statuses (if needed - enum might be in code only)
+- [ ] Update `TaskStatus` enum in `src/models/task.rs`
+- [ ] Update status parsing/display logic
+- [ ] Add `status:` filter support (if not already present)
+- [ ] Update `docs/COMMAND_REFERENCE.md` with new statuses
+- [ ] Test: New statuses can be set via modify
+- [ ] Test: Filter by status works
+- [ ] Test: Existing tasks unchanged (backward compat)
+- [ ] **Future:** Integrate with Kanban grouping (#10)
+
+**Files to Modify:**
+- `src/models/task.rs` (TaskStatus enum)
+- `src/db/migrations.rs` (if schema change needed)
+- `src/cli/parser.rs` (status parsing)
+- `docs/COMMAND_REFERENCE.md`
+
+---
+
+## Summary and Prioritization
+
+### Immediate (Next Sprint)
+1. **#4:** Allow `task done` without clock requirement (High priority, quick fix)
+2. **#1:** Drop `clock show` alias, enhance `clock list` (High priority, improves UX)
+3. **#2:** Add allocation column to `task list` (Medium priority, quick win)
+
+### Short Term (Next Month)
+4. **#3:** Filtering for `task sessions list` (Medium priority, consistency)
+5. **#5:** Simplify `task clock in` syntax (Medium priority, UX improvement)
+6. **#6:** `--clock-in` flag for `task add` (Low priority, convenience)
+7. **#9:** Dashboard/status command (High priority, consolidates info)
+
+### Medium Term (Next Quarter)
+8. **#7:** Interactive project creation (Medium priority, UX improvement)
+9. **#10:** Multiple views for `task list` - Phase 1 (Medium priority, powerful feature)
+10. **#12:** More statuses (Medium priority, enables Kanban)
+
+### Long Term (Future)
+11. **#8:** Tab completion (Low priority, nice to have)
+12. **#10:** Multiple views - Phases 2-5 (Medium priority, complex)
+13. **#11:** Plotting/visualization (Low priority, defer)
+
+---
+
+## Design Principles Applied
+
+1. **CLAP-Native Grammar:** All changes maintain or improve CLAP-native structure
+2. **One Right Way:** Removed aliases, simplified syntax where possible
+3. **Progressive Enhancement:** Complex features broken into phases
+4. **Backward Compatibility:** Where possible, maintain existing behavior
+5. **User Experience:** Prioritize common workflows and reduce cognitive load
+
+---
+
+## Notes
+
+- **Abbreviations:** Kept per Plan 11 decision, completion is additive
+- **Status Lines:** Will be removed after dashboard proves useful (#9)
+- **Kanban Stages:** Depends on status expansion (#12), defer complex grouping
+- **Priority Score:** Needs definition - start simple, iterate
+- **Plotting:** Significant feature, defer to focus on core functionality

@@ -38,6 +38,30 @@ This document tracks outstanding tasks and improvements across all plans.
 
 ---
 
+### Plan 10: Session Modification and Deletion
+
+**Status:** Planning complete, implementation pending
+
+**Summary:** Add session modification and deletion commands with syntax parallel to task modification. Includes overlap detection, conflict reporting, and session ID exposure in list output.
+
+**See:** `design/Plan_10_Session_Modification_and_Deletion.md`
+
+**Key Features:**
+- `task sessions modify <session_id> [start:<expr>] [end:<expr>]`
+- `task sessions delete <session_id>`
+- Overlap detection with detailed conflict reporting
+- Session IDs exposed in `sessions list` output
+
+**Implementation Checklist:**
+- [ ] Repository layer methods (modify, delete, overlap detection)
+- [ ] CLI layer (commands, handlers, parsers)
+- [ ] Display updates (session IDs in list output)
+- [ ] Error handling and validation
+- [ ] Documentation updates
+- [ ] Integration tests
+
+---
+
 ### General
 
 - [ ] Fix compiler warnings (11 unused variable warnings)

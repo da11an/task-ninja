@@ -375,6 +375,134 @@ impl SessionRepo {
         }
         Ok(sessions)
     }
+
+    /// Get session by ID
+    pub fn get_by_id(conn: &Connection, session_id: i64) -> Result<Option<Session>> {
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, start_ts, end_ts, created_ts FROM sessions WHERE id = ?1"
+        )?;
+        
+        stmt.query_row([session_id], |row| {
+            Ok(Session {
+                id: Some(row.get(0)?),
+                task_id: row.get(1)?,
+                start_ts: row.get(2)?,
+                end_ts: row.get(3)?,
+                created_ts: row.get(4)?,
+            })
+        })
+        .optional()
+        .context("Failed to query session by ID")
+    }
+
+    /// Modify session start time
+    pub fn modify_start_time(conn: &Connection, session_id: i64, new_start_ts: i64) -> Result<()> {
+        conn.execute(
+            "UPDATE sessions SET start_ts = ?1 WHERE id = ?2",
+            rusqlite::params![new_start_ts, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Modify session end time
+    /// Can set to None (make open) or Some(timestamp) (set end time)
+    pub fn modify_end_time(conn: &Connection, session_id: i64, new_end_ts: Option<i64>) -> Result<()> {
+        conn.execute(
+            "UPDATE sessions SET end_ts = ?1 WHERE id = ?2",
+            rusqlite::params![new_end_ts, session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Delete a session
+    /// Annotations linked to this session will have their session_id set to NULL (via ON DELETE SET NULL)
+    pub fn delete(conn: &Connection, session_id: i64) -> Result<()> {
+        conn.execute(
+            "DELETE FROM sessions WHERE id = ?1",
+            rusqlite::params![session_id],
+        )?;
+        Ok(())
+    }
+
+    /// Find sessions that overlap with the given time range
+    /// 
+    /// # Arguments
+    /// * `conn` - Database connection
+    /// * `task_id` - Task ID for the session being checked
+    /// * `start_ts` - Start timestamp
+    /// * `end_ts` - End timestamp (None for open session)
+    /// * `exclude_session_id` - Session ID to exclude from results (for modification checks)
+    /// 
+    /// # Returns
+    /// Vector of overlapping sessions
+    /// 
+    /// # Overlap Rules
+    /// - Two closed sessions overlap if: (start1 < end2) && (end1 > start2)
+    /// - An open session conflicts with any session that starts before it would end
+    /// - Only one open session allowed at a time
+    pub fn find_overlapping_sessions(
+        conn: &Connection,
+        task_id: i64,
+        start_ts: i64,
+        end_ts: Option<i64>,
+        exclude_session_id: Option<i64>,
+    ) -> Result<Vec<Session>> {
+        let mut overlapping = Vec::new();
+        
+        // Get all sessions (excluding the one being modified if specified)
+        let all_sessions = if let Some(exclude_id) = exclude_session_id {
+            let mut stmt = conn.prepare(
+                "SELECT id, task_id, start_ts, end_ts, created_ts FROM sessions WHERE id != ?1"
+            )?;
+            let rows = stmt.query_map([exclude_id], |row| {
+                Ok(Session {
+                    id: Some(row.get(0)?),
+                    task_id: row.get(1)?,
+                    start_ts: row.get(2)?,
+                    end_ts: row.get(3)?,
+                    created_ts: row.get(4)?,
+                })
+            })?;
+            let mut sessions = Vec::new();
+            for row in rows {
+                sessions.push(row?);
+            }
+            sessions
+        } else {
+            Self::list_all(conn)?
+        };
+        
+        // Check for overlaps
+        for session in all_sessions {
+            let overlaps = if let Some(session_end) = session.end_ts {
+                // Both sessions are closed
+                if let Some(check_end) = end_ts {
+                    // Both closed: (start1 < end2) && (end1 > start2)
+                    (start_ts < session_end) && (check_end > session.start_ts)
+                } else {
+                    // Check session is closed, new session is open
+                    // Open session conflicts if it starts before the closed session ends
+                    start_ts < session_end
+                }
+            } else {
+                // Session is open
+                if let Some(check_end) = end_ts {
+                    // Session is open, check session is closed
+                    // Open session conflicts if it starts before the closed session ends
+                    session.start_ts < check_end
+                } else {
+                    // Both are open - only one open session allowed
+                    true
+                }
+            };
+            
+            if overlaps {
+                overlapping.push(session);
+            }
+        }
+        
+        Ok(overlapping)
+    }
 }
 
 #[cfg(test)]

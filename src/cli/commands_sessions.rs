@@ -2,11 +2,15 @@
 
 use crate::db::DbConnection;
 use crate::repo::{SessionRepo, TaskRepo, AnnotationRepo};
+use crate::models::Session;
 use crate::cli::error::{user_error, validate_task_id};
 use crate::filter::{parse_filter, filter_tasks};
+use crate::utils::parse_date_expr;
 use anyhow::{Context, Result};
-use chrono::{DateTime, Local, TimeZone};
+use chrono::{Local, TimeZone};
+use rusqlite::Connection;
 use serde_json;
+use std::io::{self, Write};
 
 /// Format timestamp for display
 fn format_timestamp(ts: i64) -> String {
@@ -81,15 +85,19 @@ pub fn handle_task_sessions_list(task_id_opt: Option<String>, json: bool) -> Res
             return Ok(());
         }
         
-        println!("{:<6} {:<40} {:<20} {:<20} {:<12}", "Task", "Description", "Start", "End", "Duration");
-        println!("{}", "-".repeat(98));
+        println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", "Session ID", "Task", "Description", "Start", "End", "Duration");
+        println!("{}", "-".repeat(106));
         
         for session in &sessions {
             let task = TaskRepo::get_by_id(&conn, session.task_id)?
                 .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
             
-            let description = if task.description.len() > 38 {
-                format!("{}..", &task.description[..38])
+            let session_id_str = session.id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            
+            let description = if task.description.len() > 36 {
+                format!("{}..", &task.description[..36])
             } else {
                 task.description.clone()
             };
@@ -107,8 +115,8 @@ pub fn handle_task_sessions_list(task_id_opt: Option<String>, json: bool) -> Res
                 format_duration(chrono::Utc::now().timestamp() - session.start_ts)
             };
             
-            println!("{:<6} {:<40} {:<20} {:<20} {:<12}", 
-                session.task_id, description, start_str, end_str, duration_str);
+            println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", 
+                session_id_str, session.task_id, description, start_str, end_str, duration_str);
         }
     }
     
@@ -261,15 +269,19 @@ pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, j
             return Ok(());
         }
         
-        println!("{:<6} {:<40} {:<20} {:<20} {:<12}", "Task", "Description", "Start", "End", "Duration");
-        println!("{}", "-".repeat(98));
+        println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", "Session ID", "Task", "Description", "Start", "End", "Duration");
+        println!("{}", "-".repeat(106));
         
         for session in &sessions {
             let task = TaskRepo::get_by_id(&conn, session.task_id)?
                 .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
             
-            let description = if task.description.len() > 38 {
-                format!("{}..", &task.description[..38])
+            let session_id_str = session.id
+                .map(|id| id.to_string())
+                .unwrap_or_else(|| "?".to_string());
+            
+            let description = if task.description.len() > 36 {
+                format!("{}..", &task.description[..36])
             } else {
                 task.description.clone()
             };
@@ -287,8 +299,8 @@ pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, j
                 format_duration(chrono::Utc::now().timestamp() - session.start_ts)
             };
             
-            println!("{:<6} {:<40} {:<20} {:<20} {:<12}", 
-                session.task_id, description, start_str, end_str, duration_str);
+            println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", 
+                session_id_str, session.task_id, description, start_str, end_str, duration_str);
         }
     }
     
@@ -390,5 +402,245 @@ pub fn handle_task_sessions_show_with_filter(id_or_filter_opt: Option<String>) -
         }
     }
     
+    Ok(())
+}
+
+/// Parse session modification arguments
+/// Returns (start_ts, end_ts) where:
+/// - Some(Some(ts)) = set to timestamp
+/// - Some(None) = clear (for end only)
+/// - None = no change
+fn parse_session_modify_args(args: Vec<String>) -> Result<(Option<Option<i64>>, Option<Option<i64>>)> {
+    let mut start: Option<Option<i64>> = None;
+    let mut end: Option<Option<i64>> = None;
+    
+    for arg in args {
+        if arg.starts_with("start:") {
+            let expr = &arg[6..];
+            if expr == "none" {
+                return Err(anyhow::anyhow!("Cannot clear start time. Start time is required."));
+            }
+            let ts = parse_date_expr(expr)
+                .context(format!("Failed to parse start time: {}", expr))?;
+            start = Some(Some(ts));
+        } else if arg.starts_with("end:") {
+            let expr = &arg[4..];
+            if expr == "none" {
+                end = Some(None); // Clear end time (make open)
+            } else if expr == "now" {
+                end = Some(Some(chrono::Utc::now().timestamp()));
+            } else {
+                let ts = parse_date_expr(expr)
+                    .context(format!("Failed to parse end time: {}", expr))?;
+                end = Some(Some(ts));
+            }
+        } else if arg == "--yes" || arg == "--force" {
+            // Flags are handled separately
+            continue;
+        } else {
+            return Err(anyhow::anyhow!("Invalid argument: {}. Expected start:<expr> or end:<expr>", arg));
+        }
+    }
+    
+    Ok((start, end))
+}
+
+/// Format conflict error message
+fn format_conflict_error(session: &Session, conflicts: &[Session], conn: &Connection) -> Result<String> {
+    let task = TaskRepo::get_by_id(conn, session.task_id)?
+        .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
+    
+    let mut msg = format!(
+        "Error: Session modification would create conflicts:\n\n  Session {} (Task {}): {} - {}\n  Conflicts with:\n",
+        session.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()),
+        session.task_id,
+        format_timestamp(session.start_ts),
+        session.end_ts.map(|ts| format_timestamp(ts)).unwrap_or_else(|| "(running)".to_string())
+    );
+    
+    for conflict in conflicts {
+        let conflict_task = TaskRepo::get_by_id(conn, conflict.task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task {} not found", conflict.task_id))?;
+        msg.push_str(&format!(
+            "    - Session {} (Task {}): {} - {}\n",
+            conflict.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()),
+            conflict.task_id,
+            format_timestamp(conflict.start_ts),
+            conflict.end_ts.map(|ts| format_timestamp(ts)).unwrap_or_else(|| "(running)".to_string())
+        ));
+    }
+    
+    msg.push_str("\nUse --force to override (may require resolving conflicts manually).");
+    Ok(msg)
+}
+
+/// Check for overlapping sessions
+fn check_session_overlaps(
+    conn: &Connection,
+    session: &Session,
+    new_start_ts: Option<i64>,
+    new_end_ts: Option<Option<i64>>,
+) -> Result<Vec<Session>> {
+    let start_ts = new_start_ts.unwrap_or(session.start_ts);
+    let end_ts = if let Some(new_end) = new_end_ts {
+        new_end
+    } else {
+        session.end_ts
+    };
+    
+    SessionRepo::find_overlapping_sessions(
+        conn,
+        session.task_id,
+        start_ts,
+        end_ts,
+        session.id,
+    )
+}
+
+/// Handle `task sessions <session_id> modify [start:<expr>] [end:<expr>] [--yes] [--force]`
+pub fn handle_sessions_modify(session_id: i64, args: Vec<String>, yes: bool, force: bool) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    // Get session
+    let session = SessionRepo::get_by_id(&conn, session_id)?
+        .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?;
+    
+    // Parse modification arguments
+    let (start_opt, end_opt) = parse_session_modify_args(args)?;
+    
+    // Determine new values
+    let new_start_ts = start_opt.map(|s| s.unwrap());
+    let new_end_ts = end_opt;
+    
+    // Check if running session and trying to clear end time
+    if session.is_open() && new_end_ts == Some(None) {
+        user_error("Cannot clear end time of a running session. It is already open.");
+    }
+    
+    // Check for overlaps
+    let conflicts = check_session_overlaps(&conn, &session, new_start_ts, new_end_ts)?;
+    
+    if !conflicts.is_empty() && !force {
+        let error_msg = format_conflict_error(&session, &conflicts, &conn)?;
+        user_error(&error_msg);
+    }
+    
+    // Show what will be modified
+    let mut changes = Vec::new();
+    if let Some(new_start) = new_start_ts {
+        if new_start != session.start_ts {
+            changes.push(format!("Start: {} -> {}", 
+                format_timestamp(session.start_ts),
+                format_timestamp(new_start)));
+        }
+    }
+    if let Some(new_end) = new_end_ts {
+        match (session.end_ts, new_end) {
+            (Some(old_end), Some(new_end_ts)) if old_end != new_end_ts => {
+                changes.push(format!("End: {} -> {}", 
+                    format_timestamp(old_end),
+                    format_timestamp(new_end_ts)));
+            }
+            (Some(_), None) => {
+                changes.push("End: (closed) -> (open)".to_string());
+            }
+            (None, Some(new_end_ts)) => {
+                changes.push(format!("End: (running) -> {}", 
+                    format_timestamp(new_end_ts)));
+            }
+            _ => {}
+        }
+    }
+    
+    if changes.is_empty() {
+        println!("No changes specified.");
+        return Ok(());
+    }
+    
+    // Confirmation prompt
+    if !yes {
+        println!("Modify session {}?", session_id);
+        for change in &changes {
+            println!("  {}", change);
+        }
+        if !conflicts.is_empty() {
+            println!("\nWarning: This will create conflicts with {} other session(s).", conflicts.len());
+        }
+        print!("Are you sure? (y/n): ");
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+    
+    // Apply modifications
+    if let Some(new_start) = new_start_ts {
+        SessionRepo::modify_start_time(&conn, session_id, new_start)?;
+    }
+    if let Some(new_end) = new_end_ts {
+        SessionRepo::modify_end_time(&conn, session_id, new_end)?;
+    }
+    
+    println!("Modified session {}.", session_id);
+    Ok(())
+}
+
+/// Handle `task sessions <session_id> delete [--yes]`
+pub fn handle_sessions_delete(session_id: i64, yes: bool) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    // Get session
+    let session = SessionRepo::get_by_id(&conn, session_id)?
+        .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?;
+    
+    // Check if running session
+    if session.is_open() {
+        user_error("Cannot delete running session. Please clock out first.");
+    }
+    
+    // Get task info
+    let task = TaskRepo::get_by_id(&conn, session.task_id)?
+        .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
+    
+    // Get linked annotations count
+    let annotations = if let Some(sid) = session.id {
+        AnnotationRepo::get_by_session(&conn, sid)?
+    } else {
+        Vec::new()
+    };
+    
+    // Confirmation prompt
+    if !yes {
+        println!("Delete session {}?", session_id);
+        println!("  Task: {} ({})", session.task_id, task.description);
+        println!("  Start: {}", format_timestamp(session.start_ts));
+        if let Some(end_ts) = session.end_ts {
+            println!("  End: {}", format_timestamp(end_ts));
+            if let Some(duration) = session.duration_secs() {
+                println!("  Duration: {}", format_duration(duration));
+            }
+        }
+        println!("  Linked annotations: {}", annotations.len());
+        print!("\nAre you sure? (y/n): ");
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        if input.trim().to_lowercase() != "y" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+    
+    // Delete session
+    SessionRepo::delete(&conn, session_id)?;
+    
+    println!("Deleted session {}.", session_id);
     Ok(())
 }

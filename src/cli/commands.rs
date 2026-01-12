@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use crate::db::DbConnection;
 use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo};
 use crate::cli::parser::{parse_task_args, join_description};
-use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter};
+use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete};
 use crate::cli::output::{format_task_list_table, format_stack_display, format_task_summary};
 use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec};
 use crate::utils::{parse_date_expr, parse_duration, fuzzy};
@@ -264,6 +264,26 @@ pub enum SessionsCommands {
     },
     /// Show detailed session information
     Show,
+    /// Modify session start/end times
+    /// Syntax: task sessions <session_id> modify [start:<expr>] [end:<expr>]
+    Modify {
+        /// Modification arguments (start:<expr>, end:<expr>)
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+        /// Apply modification without confirmation
+        #[arg(long)]
+        yes: bool,
+        /// Allow modification even with conflicts
+        #[arg(long)]
+        force: bool,
+    },
+    /// Delete a session
+    /// Syntax: task sessions <session_id> delete
+    Delete {
+        /// Delete without confirmation
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -311,6 +331,23 @@ pub fn run() -> Result<()> {
                 let interactive = done_args.contains(&"--interactive".to_string());
                 
                 return handle_task_done(Some(id_or_filter), at, next, yes, interactive);
+            }
+        }
+    }
+    
+    // Check if this is task sessions <session_id> modify/delete pattern
+    // This must come BEFORE task <id|filter> delete pattern to avoid conflicts
+    if args.len() >= 3 && args[0] == "sessions" {
+        if let Ok(session_id) = args[1].parse::<i64>() {
+            if args[2] == "modify" {
+                let modify_args = args[3..].to_vec();
+                let yes = modify_args.contains(&"--yes".to_string());
+                let force = modify_args.contains(&"--force".to_string());
+                return handle_sessions_modify(session_id, modify_args, yes, force);
+            } else if args[2] == "delete" {
+                let delete_args = args[3..].to_vec();
+                let yes = delete_args.contains(&"--yes".to_string());
+                return handle_sessions_delete(session_id, yes);
             }
         }
     }
@@ -414,6 +451,48 @@ pub fn run() -> Result<()> {
         }
     }
     
+    // Check if this is task [<id|filter>] sessions pattern
+    // But only if the first arg is NOT a known global subcommand (or if sessions_pos == 0)
+    if args.len() >= 2 {
+        if let Some(sessions_pos) = args.iter().position(|a| a == "sessions") {
+            if sessions_pos > 0 {
+                // Check if first arg is a task ID (numeric) or filter (not a global subcommand)
+                let first_arg = &args[0];
+                let is_global_subcommand = matches!(first_arg.as_str(), 
+                    "projects" | "stack" | "clock" | "recur" | "sessions");
+                
+                if !is_global_subcommand {
+                    // We have task <id|filter> sessions
+                    let id_or_filter = args[0].clone();
+                    let sessions_args = args[sessions_pos + 1..].to_vec();
+                    
+                    // Parse subcommand
+                    if let Some(subcmd) = sessions_args.first() {
+                        if subcmd == "list" {
+                            let json = sessions_args.contains(&"--json".to_string());
+                            return handle_task_sessions_list_with_filter(Some(id_or_filter), json);
+                        } else if subcmd == "show" {
+                            return handle_task_sessions_show_with_filter(Some(id_or_filter));
+                        }
+                    }
+                }
+            } else if sessions_pos == 0 {
+                // We have task sessions (no ID/filter)
+                let sessions_args = args[sessions_pos + 1..].to_vec();
+                
+                // Parse subcommand
+                if let Some(subcmd) = sessions_args.first() {
+                    if subcmd == "list" {
+                        let json = sessions_args.contains(&"--json".to_string());
+                        return handle_task_sessions_list_with_filter(None, json);
+                    } else if subcmd == "show" {
+                        return handle_task_sessions_show_with_filter(None);
+                    }
+                }
+            }
+        }
+    }
+    
     // Check if this is task <id|filter> list pattern
     // But only if the first arg is NOT a known global subcommand
     if args.len() >= 2 {
@@ -459,48 +538,6 @@ pub fn run() -> Result<()> {
                 return handle_stack_pick(index);
             } else if args[2] == "drop" {
                 return handle_stack_drop(index);
-            }
-        }
-    }
-    
-    // Check if this is task [<id|filter>] sessions pattern
-    // But only if the first arg is NOT a known global subcommand (or if sessions_pos == 0)
-    if args.len() >= 2 {
-        if let Some(sessions_pos) = args.iter().position(|a| a == "sessions") {
-            if sessions_pos > 0 {
-                // Check if first arg is a task ID (numeric) or filter (not a global subcommand)
-                let first_arg = &args[0];
-                let is_global_subcommand = matches!(first_arg.as_str(), 
-                    "projects" | "stack" | "clock" | "recur" | "sessions");
-                
-                if !is_global_subcommand {
-                    // We have task <id|filter> sessions
-                    let id_or_filter = args[0].clone();
-                    let sessions_args = args[sessions_pos + 1..].to_vec();
-                    
-                    // Parse subcommand
-                    if let Some(subcmd) = sessions_args.first() {
-                        if subcmd == "list" {
-                            let json = sessions_args.contains(&"--json".to_string());
-                            return handle_task_sessions_list_with_filter(Some(id_or_filter), json);
-                        } else if subcmd == "show" {
-                            return handle_task_sessions_show_with_filter(Some(id_or_filter));
-                        }
-                    }
-                }
-            } else if sessions_pos == 0 {
-                // We have task sessions (no ID/filter)
-                let sessions_args = args[sessions_pos + 1..].to_vec();
-                
-                // Parse subcommand
-                if let Some(subcmd) = sessions_args.first() {
-                    if subcmd == "list" {
-                        let json = sessions_args.contains(&"--json".to_string());
-                        return handle_task_sessions_list_with_filter(None, json);
-                    } else if subcmd == "show" {
-                        return handle_task_sessions_show_with_filter(None);
-                    }
-                }
             }
         }
     }
@@ -551,6 +588,12 @@ pub fn run() -> Result<()> {
                         match subcommand {
                             SessionsCommands::List { json } => handle_task_sessions_list(None, json),
                             SessionsCommands::Show => handle_task_sessions_show(None),
+                            SessionsCommands::Modify { args, yes, force } => {
+                                user_error("Session ID required. Use: task sessions <session_id> modify");
+                            }
+                            SessionsCommands::Delete { yes } => {
+                                user_error("Session ID required. Use: task sessions <session_id> delete");
+                            }
                         }
                     }
                     Commands::Summary { id_or_filter } => {
@@ -656,6 +699,12 @@ pub fn run() -> Result<()> {
             match subcommand {
                 SessionsCommands::List { json } => handle_task_sessions_list(None, json),
                 SessionsCommands::Show => handle_task_sessions_show(None),
+                SessionsCommands::Modify { args, yes, force } => {
+                    user_error("Session ID required. Use: task sessions <session_id> modify");
+                }
+                SessionsCommands::Delete { yes } => {
+                    user_error("Session ID required. Use: task sessions <session_id> delete");
+                }
             }
         }
         Commands::Summary { id_or_filter } => {

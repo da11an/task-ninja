@@ -348,52 +348,52 @@ if !conflicts.is_empty() && !force {
 
 ### Implementation Checklist
 
-- [ ] **Repository Layer:**
-  - [ ] Add `modify_start_time()` method to `SessionRepo`
-  - [ ] Add `modify_end_time()` method to `SessionRepo` (enhance existing `amend_end_time`)
-  - [ ] Add `delete()` method to `SessionRepo`
-  - [ ] Add `find_overlapping_sessions()` method to `SessionRepo`
-  - [ ] Add `get_by_id()` method to `SessionRepo`
+- [x] **Repository Layer:**
+  - [x] Add `modify_start_time()` method to `SessionRepo`
+  - [x] Add `modify_end_time()` method to `SessionRepo` (enhance existing `amend_end_time`)
+  - [x] Add `delete()` method to `SessionRepo`
+  - [x] Add `find_overlapping_sessions()` method to `SessionRepo`
+  - [x] Add `get_by_id()` method to `SessionRepo`
   - [ ] Add unit tests for overlap detection logic
   - [ ] Add unit tests for modification methods
   - [ ] Add unit tests for deletion method
 
-- [ ] **CLI Layer:**
-  - [ ] Add `Modify` variant to `SessionsCommands` enum
-  - [ ] Add `Delete` variant to `SessionsCommands` enum
-  - [ ] Add handler for `SessionsCommands::Modify` in `handle_sessions()`
-  - [ ] Add handler for `SessionsCommands::Delete` in `handle_sessions()`
-  - [ ] Create `handle_sessions_modify()` function in `src/cli/commands_sessions.rs`
-  - [ ] Create `handle_sessions_delete()` function in `src/cli/commands_sessions.rs`
-  - [ ] Create `parse_session_modify_args()` function
-  - [ ] Create `check_session_overlaps()` function
-  - [ ] Create `format_conflict_error()` function
+- [x] **CLI Layer:**
+  - [x] Add `Modify` variant to `SessionsCommands` enum
+  - [x] Add `Delete` variant to `SessionsCommands` enum
+  - [x] Add handler for `SessionsCommands::Modify` in `handle_sessions()`
+  - [x] Add handler for `SessionsCommands::Delete` in `handle_sessions()`
+  - [x] Create `handle_sessions_modify()` function in `src/cli/commands_sessions.rs`
+  - [x] Create `handle_sessions_delete()` function in `src/cli/commands_sessions.rs`
+  - [x] Create `parse_session_modify_args()` function
+  - [x] Create `check_session_overlaps()` function
+  - [x] Create `format_conflict_error()` function
 
-- [ ] **Display Updates:**
-  - [ ] Add Session ID column to `sessions list` table output
-  - [ ] Update table header and formatting
-  - [ ] Ensure session IDs are visible and easy to reference
+- [x] **Display Updates:**
+  - [x] Add Session ID column to `sessions list` table output
+  - [x] Update table header and formatting
+  - [x] Ensure session IDs are visible and easy to reference
 
-- [ ] **Error Handling:**
-  - [ ] Handle session not found errors
-  - [ ] Handle running session deletion attempts
-  - [ ] Handle overlap conflicts with detailed reporting
-  - [ ] Handle invalid date expressions
-  - [ ] Handle invalid session IDs
+- [x] **Error Handling:**
+  - [x] Handle session not found errors
+  - [x] Handle running session deletion attempts
+  - [x] Handle overlap conflicts with detailed reporting
+  - [x] Handle invalid date expressions
+  - [x] Handle invalid session IDs
 
-- [ ] **Documentation:**
-  - [ ] Update `docs/COMMAND_REFERENCE.md` with session modification command
-  - [ ] Update `docs/COMMAND_REFERENCE.md` with session deletion command
-  - [ ] Add examples for both commands
-  - [ ] Document overlap detection behavior
-  - [ ] Update `README.md` if needed
+- [x] **Documentation:**
+  - [x] Update `docs/COMMAND_REFERENCE.md` with session modification command
+  - [x] Update `docs/COMMAND_REFERENCE.md` with session deletion command
+  - [x] Add examples for both commands
+  - [x] Document overlap detection behavior
+  - [x] Update `README.md` if needed
 
-- [ ] **Testing:**
-  - [ ] Integration tests for session modification
-  - [ ] Integration tests for session deletion
-  - [ ] Integration tests for overlap detection
-  - [ ] Integration tests for conflict reporting
-  - [ ] Edge case tests (running session, invalid IDs, etc.)
+- [x] **Testing:**
+  - [x] Integration tests for session modification
+  - [x] Integration tests for session deletion
+  - [x] Integration tests for overlap detection
+  - [x] Integration tests for conflict reporting
+  - [x] Edge case tests (running session, invalid IDs, etc.)
 
 ---
 

@@ -176,6 +176,21 @@ task sessions show
 
 # Show most recent session for task
 task 10 sessions show
+
+# Modify session start/end times
+task sessions 5 modify start:09:00
+task sessions 5 modify end:17:00
+task sessions 5 modify start:09:00 end:17:00
+
+# Close an open session
+task sessions 5 modify end:now
+
+# Make a closed session open (clear end time)
+task sessions 5 modify end:none
+
+# Delete a session
+task sessions 5 delete
+task sessions 5 delete --yes
 ```
 
 ### Recurrence

@@ -444,6 +444,103 @@ task sessions show
 task 10 sessions show
 ```
 
+### `task sessions <session_id> modify [start:<expr>] [end:<expr>] [--yes] [--force]`
+
+Modify session start and/or end times.
+
+**Syntax:** Consistent with filter-before-verb pattern: `task <filter> <verb> <details>`
+
+**Fields:**
+- `start:<expr>` - Modify start time (date expression)
+- `end:<expr>` - Modify end time (date expression)
+- `end:none` - Clear end time (make session open, only for closed sessions)
+- `end:now` - Set end time to current time (close session, only for open sessions)
+
+**Options:**
+- `--yes` - Apply modification without confirmation
+- `--force` - Allow modification even with conflicts (may require manual conflict resolution)
+
+**Overlap Detection:**
+- Before applying modifications, checks for conflicts with other sessions
+- Reports all conflicting sessions with details
+- Prevents modification by default if conflicts exist (use `--force` to override)
+
+**Behavior:**
+- Cannot clear end time of a running session (it's already open)
+- Cannot modify running session's end time to `none`
+- Can modify running session's start time (but checks for conflicts)
+
+**Examples:**
+```bash
+# Modify start time
+task sessions 5 modify start:09:00
+
+# Modify end time
+task sessions 5 modify end:17:00
+
+# Modify both
+task sessions 5 modify start:09:00 end:17:00
+
+# Close an open session
+task sessions 5 modify end:now
+
+# Make a closed session open (clear end time)
+task sessions 5 modify end:none
+
+# Modify with confirmation bypass
+task sessions 5 modify start:09:00 --yes
+
+# Force modification despite conflicts
+task sessions 5 modify start:10:00 --force
+```
+
+**Conflict Example:**
+```bash
+$ task sessions 5 modify start:10:00
+Error: Session modification would create conflicts:
+
+  Session 5 (Task 10): 2024-01-15 10:00:00 - 2024-01-15 11:00:00
+  Conflicts with:
+    - Session 3 (Task 8): 2024-01-15 10:00:00 - 2024-01-15 12:00:00
+
+Use --force to override (may require resolving conflicts manually).
+```
+
+### `task sessions <session_id> delete [--yes]`
+
+Delete a session.
+
+**Syntax:** Consistent with filter-before-verb pattern: `task <filter> <verb> <details>`
+
+**Options:**
+- `--yes` - Delete without confirmation
+
+**Behavior:**
+- Cannot delete running session (must clock out first)
+- Annotations linked to session will have their `session_id` set to NULL
+- Events referencing the session are preserved
+
+**Examples:**
+```bash
+# Delete session (with confirmation)
+task sessions 5 delete
+
+# Delete session (without confirmation)
+task sessions 5 delete --yes
+```
+
+**Confirmation Prompt:**
+```
+Delete session 5?
+  Task: 10 (Fix bug in authentication)
+  Start: 2024-01-15 09:00:00
+  End: 2024-01-15 11:00:00
+  Duration: 2h0m0s
+  Linked annotations: 2
+
+Are you sure? (y/n):
+```
+
 ---
 
 ## Recurrence Commands

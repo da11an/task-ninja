@@ -193,14 +193,17 @@ pub fn handle_task_sessions_show(task_id_opt: Option<String>) -> Result<()> {
     Ok(())
 }
 
-/// Handle `task [<id|filter>] sessions list [--json]` with filter support
-pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, json: bool) -> Result<()> {
+/// Handle `task sessions list [<filter>...] [--json]` with filter support
+pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: bool) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let sessions = if let Some(ref id_or_filter) = id_or_filter_opt {
-        // Try to parse as task ID first, otherwise treat as filter
-        match validate_task_id(id_or_filter) {
+    let sessions = if filter_args.is_empty() {
+        // List all sessions
+        SessionRepo::list_all(&conn)?
+    } else if filter_args.len() == 1 {
+        // Single argument - try to parse as task ID first, otherwise treat as filter
+        match validate_task_id(&filter_args[0]) {
             Ok(task_id) => {
                 // Single task ID
                 if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
@@ -210,7 +213,7 @@ pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, j
             }
             Err(_) => {
                 // Treat as filter - aggregate sessions across all matching tasks
-                let filter_expr = match parse_filter(vec![id_or_filter.clone()]) {
+                let filter_expr = match parse_filter(filter_args) {
                     Ok(expr) => expr,
                     Err(e) => user_error(&format!("Filter parse error: {}", e)),
                 };
@@ -218,6 +221,9 @@ pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, j
                     .context("Failed to filter tasks")?;
                 
                 if matching_tasks.is_empty() {
+                    if !json {
+                        println!("No sessions found.");
+                    }
                     return Ok(()); // No tasks, no sessions
                 }
                 
@@ -238,8 +244,35 @@ pub fn handle_task_sessions_list_with_filter(id_or_filter_opt: Option<String>, j
             }
         }
     } else {
-        // List all sessions
-        SessionRepo::list_all(&conn)?
+        // Multiple arguments - treat as filter
+        let filter_expr = match parse_filter(filter_args) {
+            Ok(expr) => expr,
+            Err(e) => user_error(&format!("Filter parse error: {}", e)),
+        };
+        let matching_tasks = filter_tasks(&conn, &filter_expr)
+            .context("Failed to filter tasks")?;
+        
+        if matching_tasks.is_empty() {
+            if !json {
+                println!("No sessions found.");
+            }
+            return Ok(()); // No tasks, no sessions
+        }
+        
+        let task_ids: Vec<i64> = matching_tasks.iter()
+            .filter_map(|(task, _)| task.id)
+            .collect();
+        
+        // Aggregate sessions from all matching tasks
+        let mut all_sessions = Vec::new();
+        for task_id in task_ids {
+            let mut task_sessions = SessionRepo::get_by_task(&conn, task_id)?;
+            all_sessions.append(&mut task_sessions);
+        }
+        
+        // Sort by start time (newest first)
+        all_sessions.sort_by(|a, b| b.start_ts.cmp(&a.start_ts));
+        all_sessions
     };
     
     if json {

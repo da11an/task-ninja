@@ -181,6 +181,9 @@ pub enum RecurCommands {
 pub enum SessionsCommands {
     /// List session history
     List {
+        /// Filter arguments (e.g., "project:work +urgent")
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        filter: Vec<String>,
         /// Output in JSON format
         #[arg(long)]
         json: bool,
@@ -407,8 +410,16 @@ fn handle_command(cli: Cli) -> Result<()> {
         }
         Commands::Sessions { subcommand, task } => {
             match subcommand {
-                SessionsCommands::List { json } => {
-                    handle_task_sessions_list_with_filter(task, json)
+                SessionsCommands::List { filter, json } => {
+                    // If filter arguments provided, use them; otherwise fall back to --task flag for backward compatibility
+                    if !filter.is_empty() {
+                        handle_task_sessions_list_with_filter(filter, json)
+                    } else if let Some(task_str) = task {
+                        // Backward compatibility: support --task flag
+                        handle_task_sessions_list_with_filter(vec![task_str], json)
+                    } else {
+                        handle_task_sessions_list_with_filter(vec![], json)
+                    }
                 }
                 SessionsCommands::Show => {
                     handle_task_sessions_show_with_filter(task)

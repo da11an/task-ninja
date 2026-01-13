@@ -397,17 +397,20 @@ task clock out 17:00
 
 ## Session Commands
 
-### `task sessions list [--task <id|filter>] [--json]`
+### `task sessions list [<filter>...] [--json]`
 
 List session history.
 
 **Behavior:**
-- If `--task` provided: lists sessions for specific task or filter
-- If `--task` omitted: lists all sessions
+- If filter arguments provided: lists sessions for tasks matching the filter
+- If filter omitted: lists all sessions
+- Filters sessions by task attributes (project, tags, etc.)
+- Supports same filter syntax as `task list`
 
 **Options:**
-- `--task <id|filter>` - Filter sessions by task ID or filter
+- `<filter>...` - Filter arguments (e.g., "project:work +urgent")
 - `--json` - Output in JSON format
+- `--task <id|filter>` - Legacy flag (backward compatibility, use filter arguments instead)
 
 **Examples:**
 ```bash
@@ -415,11 +418,23 @@ List session history.
 task sessions list
 
 # List sessions for specific task
-task sessions list --task 10
+task sessions list 10
+
+# Filter by project
+task sessions list project:work
+
+# Filter by tags
+task sessions list +urgent
+
+# Multiple filter arguments
+task sessions list project:work +urgent
 
 # JSON output
 task sessions list --json
-task sessions list --task 10 --json
+task sessions list project:work --json
+
+# Legacy --task flag (still supported)
+task sessions list --task 10
 ```
 
 ### `task sessions show [--task <id|filter>]`

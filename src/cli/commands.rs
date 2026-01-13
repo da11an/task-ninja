@@ -269,6 +269,20 @@ pub fn run() -> Result<()> {
     // Get raw args
     let mut args: Vec<String> = std::env::args().skip(1).collect();
     
+    // Check for version flag early (before any processing)
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        // Use clap to handle version display properly
+        let cli = Cli::try_parse_from(std::env::args());
+        match cli {
+            Ok(_) => return Ok(()), // Version was printed by clap
+            Err(e) => {
+                // If parsing fails, just print version manually
+                println!("task {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
+        }
+    }
+    
     // Expand command abbreviations before processing
     args = match abbrev::expand_command_abbreviations(args) {
         Ok(expanded) => expanded,

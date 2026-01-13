@@ -55,6 +55,7 @@ pub fn format_task_list_table(
     let mut project_width = 15;
     let mut tags_width = 20;
     let mut due_width = 12;
+    let mut alloc_width = 10; // "Allocation" header
     
     // First pass: calculate widths
     for (task, tags) in tasks {
@@ -76,23 +77,29 @@ pub fn format_task_list_table(
         if task.due_ts.is_some() {
             due_width = due_width.max(12);
         }
+        
+        if let Some(alloc_secs) = task.alloc_secs {
+            let alloc_str = format_duration(alloc_secs);
+            alloc_width = alloc_width.max(alloc_str.len());
+        }
     }
     
     // Build header
     let mut output = String::new();
     output.push_str(&format!(
-        "{:<id$} {:<desc$} {:<status$} {:<project$} {:<tags$} {:<due$}\n",
-        "ID", "Description", "Status", "Project", "Tags", "Due",
+        "{:<id$} {:<desc$} {:<status$} {:<project$} {:<tags$} {:<due$} {:<alloc$}\n",
+        "ID", "Description", "Status", "Project", "Tags", "Due", "Allocation",
         id = id_width,
         desc = desc_width,
         status = status_width,
         project = project_width,
         tags = tags_width,
-        due = due_width
+        due = due_width,
+        alloc = alloc_width
     ));
     
     // Separator line
-    let total_width = id_width + desc_width + status_width + project_width + tags_width + due_width + 5;
+    let total_width = id_width + desc_width + status_width + project_width + tags_width + due_width + alloc_width + 6;
     output.push_str(&format!("{}\n", "-".repeat(total_width)));
     
     // Build rows
@@ -138,15 +145,22 @@ pub fn format_task_list_table(
             String::new()
         };
         
+        let alloc = if let Some(alloc_secs) = task.alloc_secs {
+            format_duration(alloc_secs)
+        } else {
+            String::new()
+        };
+        
         output.push_str(&format!(
-            "{:<id$} {:<desc$} {:<status$} {:<project$} {:<tags$} {:<due$}\n",
-            id, desc, status, project, tag_str, due,
+            "{:<id$} {:<desc$} {:<status$} {:<project$} {:<tags$} {:<due$} {:<alloc$}\n",
+            id, desc, status, project, tag_str, due, alloc,
             id = id_width,
             desc = desc_width,
             status = status_width,
             project = project_width,
             tags = tags_width,
-            due = due_width
+            due = due_width,
+            alloc = alloc_width
         ));
     }
     

@@ -1,6 +1,6 @@
 // Output formatting utilities
 
-use crate::models::Task;
+use crate::models::{Task, TaskStatus};
 use crate::repo::{ProjectRepo, AnnotationRepo, SessionRepo, StackRepo, TaskRepo};
 use chrono::Local;
 use rusqlite::Connection;
@@ -493,6 +493,157 @@ pub fn format_task_summary(
         .filter_map(|s| s.duration_secs())
         .sum();
     output.push_str(&format!("Total Time: {}\n", format_duration(total_secs)));
+    
+    Ok(output)
+}
+
+/// Format dashboard output
+pub fn format_dashboard(
+    conn: &Connection,
+    clock_state: Option<(i64, i64)>,
+    clock_stack_tasks: &[(usize, Task, Vec<String>)],
+    priority_tasks: &[(Task, Vec<String>, f64)],
+    today_session_count: usize,
+    today_duration: i64,
+    overdue_count: usize,
+    next_overdue_ts: Option<i64>,
+) -> Result<String> {
+    let mut output = String::new();
+    
+    // Clock Status Section
+    output.push_str("=== Clock Status ===\n");
+    if let Some((task_id, duration)) = clock_state {
+        if duration > 0 {
+            output.push_str(&format!("Clocked IN on task {} ({})\n", task_id, format_duration(duration)));
+        } else {
+            output.push_str(&format!("Clocked OUT (task {} in stack)\n", task_id));
+        }
+    } else {
+        output.push_str("Clocked OUT (no task in stack)\n");
+    }
+    output.push_str("\n");
+    
+    // Clock Stack Section (top 3)
+    output.push_str("=== Clock Stack (Top 3) ===\n");
+    if clock_stack_tasks.is_empty() {
+        output.push_str("Stack is empty.\n");
+    } else {
+        for (idx, task, tags) in clock_stack_tasks {
+            let project_name = if let Some(project_id) = task.project_id {
+                ProjectRepo::get_by_id(conn, project_id)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.name)
+                    .unwrap_or_else(|| "?".to_string())
+            } else {
+                "".to_string()
+            };
+            
+            let project_str = if project_name.is_empty() {
+                "".to_string()
+            } else {
+                format!(" project:{}", project_name)
+            };
+            
+            let tags_str = if tags.is_empty() {
+                "".to_string()
+            } else {
+                format!(" {}", tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" "))
+            };
+            
+            let due_str = if let Some(due_ts) = task.due_ts {
+                format!(" due:{}", format_date(due_ts))
+            } else {
+                "".to_string()
+            };
+            
+            let alloc_str = if let Some(alloc) = task.alloc_secs {
+                format!(" alloc:{}", format_duration(alloc))
+            } else {
+                "".to_string()
+            };
+            
+            output.push_str(&format!(
+                "[{}] {}: {}{}{}{}{}\n",
+                idx, task.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()),
+                task.description,
+                project_str,
+                tags_str,
+                due_str,
+                alloc_str,
+            ));
+        }
+    }
+    output.push_str("\n");
+    
+    // Priority Tasks Section (top 3 NOT in clock stack)
+    output.push_str("=== Priority Tasks (Top 3) ===\n");
+    if priority_tasks.is_empty() {
+        output.push_str("No priority tasks (all tasks are in clock stack or completed).\n");
+    } else {
+        for (task, tags, priority) in priority_tasks {
+            let project_name = if let Some(project_id) = task.project_id {
+                ProjectRepo::get_by_id(conn, project_id)
+                    .ok()
+                    .flatten()
+                    .map(|p| p.name)
+                    .unwrap_or_else(|| "?".to_string())
+            } else {
+                "".to_string()
+            };
+            
+            let project_str = if project_name.is_empty() {
+                "".to_string()
+            } else {
+                format!(" project:{}", project_name)
+            };
+            
+            let tags_str = if tags.is_empty() {
+                "".to_string()
+            } else {
+                format!(" {}", tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" "))
+            };
+            
+            let due_str = if let Some(due_ts) = task.due_ts {
+                format!(" due:{}", format_date(due_ts))
+            } else {
+                "".to_string()
+            };
+            
+            let alloc_str = if let Some(alloc) = task.alloc_secs {
+                format!(" alloc:{}", format_duration(alloc))
+            } else {
+                "".to_string()
+            };
+            
+            output.push_str(&format!(
+                "{}: {}{}{}{}{} (priority: {:.1})\n",
+                task.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()),
+                task.description,
+                project_str,
+                tags_str,
+                due_str,
+                alloc_str,
+                priority,
+            ));
+        }
+    }
+    output.push_str("\n");
+    
+    // Today's Sessions Section
+    output.push_str("=== Today's Sessions ===\n");
+    output.push_str(&format!("{} session(s), {}\n", today_session_count, format_duration(today_duration)));
+    output.push_str("\n");
+    
+    // Overdue Tasks Section
+    output.push_str("=== Overdue Tasks ===\n");
+    if overdue_count > 0 {
+        output.push_str(&format!("{} task(s) overdue\n", overdue_count));
+    } else if let Some(next_ts) = next_overdue_ts {
+        output.push_str(&format!("No overdue tasks. Next due: {}\n", format_date(next_ts)));
+    } else {
+        output.push_str("No overdue tasks. No tasks with due dates.\n");
+    }
     
     Ok(output)
 }

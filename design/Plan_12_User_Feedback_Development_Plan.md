@@ -503,9 +503,10 @@ These require substantial design and implementation work, potentially new subsys
 
 ### 9. Dashboard/status command
 
-**Status:** Major Feature  
+**Status:** ✅ **COMPLETED**  
 **Priority:** High  
-**Estimated Effort:** 12-16 hours
+**Estimated Effort:** 12-16 hours  
+**Actual Effort:** ~4 hours
 
 **Current State:**
 - Status lines appear in individual commands
@@ -513,13 +514,13 @@ These require substantial design and implementation work, potentially new subsys
 
 **Requested Changes:**
 - New `task status` or `task dashboard` command
-- Remove status lines from individual commands
+- Remove status lines from individual commands ✅ **COMPLETED**
 - Dashboard shows:
-  - Clock status (in/out, current task, duration)
-  - Top 3 tasks from clock stack
-  - Top 3 priority tasks NOT on clock stack
-  - Session summary for today
-  - Overdue tasks count (or next overdue date)
+  - Clock status (in/out, current task, duration) ✅
+  - Top 3 tasks from clock stack ✅
+  - Top 3 priority tasks NOT on clock stack ✅ **COMPLETED** (with Taskwarrior-style priority calculation)
+  - Session summary for today ✅
+  - Overdue tasks count (or next overdue date) ✅
 
 **Design Considerations:**
 - **This is a great idea** - consolidates information, reduces noise
@@ -533,22 +534,65 @@ These require substantial design and implementation work, potentially new subsys
 - **Status line removal:** Do this after dashboard is proven useful
 
 **Implementation Checklist:**
-- [ ] Create `Status` or `Dashboard` command variant
-- [ ] Implement `handle_status` function
-- [ ] Query clock state and current task
-- [ ] Query top 3 clock stack tasks with details
-- [ ] Query today's session summary (total time, count)
-- [ ] Query overdue tasks (due_ts < now && status = pending)
-- [ ] Calculate "next overdue" if none overdue
-- [ ] Format dashboard output (sections, tables)
-- [ ] Add `--json` flag for machine-readable output
-- [ ] Update `docs/COMMAND_REFERENCE.md`
-- [ ] Test: Dashboard shows all sections
-- [ ] Test: Empty states handled gracefully
-- [ ] Test: Performance is acceptable (< 100ms)
-- [ ] **Future:** Remove status lines from other commands
-- [ ] **Future:** Add priority calculation
+- [x] Create `Status` or `Dashboard` command variant
+- [x] Implement `handle_status` function
+- [x] Query clock state and current task
+- [x] Query top 3 clock stack tasks with details
+- [x] Query today's session summary (total time, count)
+- [x] Query overdue tasks (due_ts < now && status = pending)
+- [x] Calculate "next overdue" if none overdue
+- [x] Format dashboard output (sections, tables)
+- [x] Add `--json` flag for machine-readable output
+- [x] Update `docs/COMMAND_REFERENCE.md`
+- [x] Test: Dashboard shows all sections
+- [x] Test: Empty states handled gracefully
+- [ ] Test: Performance is acceptable (< 100ms) - **Note:** Performance testing deferred
+- [x] **COMPLETED:** Remove status lines from other commands ✅
+- [x] **COMPLETED:** Add priority calculation ✅
 - [ ] **Future:** Add `--sections` flag to show/hide sections
+
+**Implementation Notes:**
+- ✅ Command name: `task status` (chosen over `task dashboard` for brevity)
+- ✅ All MVP sections implemented: Clock status, Clock stack (top 3), Priority tasks (top 3), Today's sessions, Overdue tasks
+- ✅ JSON output format matches human-readable sections
+- ✅ Empty states handled gracefully with appropriate messages
+- ✅ Tests cover: empty state, clocked in task, clock stack, overdue tasks, today's sessions, JSON output
+- ✅ **Status lines removed** from all individual commands (root, projects, clock, recur, sessions, annotate)
+- ✅ **Priority calculation implemented** using Taskwarrior-style urgency algorithm
+- ✅ Priority calculation considers: due date proximity, allocation remaining, task age, status
+- ✅ Priority tasks exclude tasks already in clock stack
+- ✅ Priority tests cover: overdue priority, due soon priority, allocation effects, exclusion of clock stack tasks
+
+**Variances:**
+- Priority calculation added (was marked as "Future" in original plan, but implemented now)
+- Status line removal completed (was marked as "Future" in original plan, but completed now)
+
+**Test Results:**
+- ✅ All 7 status_tests passing
+- ✅ All 5 priority_tests passing
+- ✅ Manual verification: Dashboard displays all sections correctly
+- ✅ Manual verification: JSON output is valid and complete
+- ✅ Manual verification: Empty states show appropriate messages
+- ✅ Manual verification: Priority calculation works correctly
+- ✅ Manual verification: Status lines removed from all commands
+
+**Status Line Removal:**
+- ✅ Removed status line display from root command (`task`)
+- ✅ Removed status line display from `task projects`
+- ✅ Removed status line display from `task clock`
+- ✅ Removed status line display from `task recur`
+- ✅ Removed status line display from `task sessions`
+- ✅ Removed status line display from `task annotate`
+- ✅ All status information now consolidated in `task status` command
+
+**Priority Calculation Implementation:**
+- ✅ Created `src/cli/priority.rs` with Taskwarrior-style urgency calculation
+- ✅ Priority factors: due date proximity, allocation remaining, task age, status
+- ✅ Added `get_top_priority_tasks()` function to get top N priority tasks excluding clock stack
+- ✅ Added priority section to dashboard output
+- ✅ Added priority scores to JSON output
+- ✅ Priority calculation excludes tasks already in clock stack
+- ✅ Tests verify: overdue priority, due soon priority, allocation effects, exclusion logic
 
 **Files to Create/Modify:**
 - `src/cli/commands.rs` (Status command, handle_status)

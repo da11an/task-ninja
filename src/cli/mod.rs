@@ -5,6 +5,7 @@ pub mod output;
 pub mod parser;
 pub mod status;
 pub mod abbrev;
+pub mod priority;
 
 pub use commands::*;
 pub use parser::*;

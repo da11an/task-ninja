@@ -8,6 +8,7 @@ Complete reference for all Task Ninja commands with examples and usage patterns.
 - [Project Commands](#project-commands)
 - [Clock Commands](#clock-commands)
 - [Session Commands](#session-commands)
+- [Status Command](#status-command)
 - [Recurrence Commands](#recurrence-commands)
 - [Filter Syntax](#filter-syntax)
 - [Date Expressions](#date-expressions)
@@ -582,6 +583,117 @@ Delete session 5?
 
 Are you sure? (y/n):
 ```
+
+---
+
+## Status Command
+
+### `task status [--json]`
+
+Show dashboard with system status and actionable information.
+
+**Description:** Displays a consolidated view of the current system state, including clock status, clock stack, today's sessions, and overdue tasks.
+
+**Options:**
+- `--json` - Output in JSON format
+
+**Sections:**
+1. **Clock Status** - Shows whether clocked in/out, current task, and duration if clocked in
+2. **Clock Stack (Top 3)** - Displays the top 3 tasks in the clock stack with full details
+3. **Priority Tasks (Top 3)** - Displays the top 3 priority tasks NOT in the clock stack, sorted by urgency score
+4. **Today's Sessions** - Summary of sessions today (count and total duration)
+5. **Overdue Tasks** - Count of overdue tasks, or next overdue date if none
+
+**Priority Calculation:**
+Priority is calculated using a Taskwarrior-style urgency algorithm that considers:
+- **Due date proximity**: Tasks due soon or overdue get higher priority
+  - Overdue tasks: High urgency (15.0 - days_overdue * 0.5, min 1.0)
+  - Due within 7 days: Urgency increases as deadline approaches (12.0 - days_until_due)
+  - Due within 30 days: Moderate urgency (5.0 - days_until_due / 10.0)
+  - Due far in future: Low urgency (2.0 / (1.0 + days_until_due / 30.0))
+- **Allocation remaining**: Tasks with less time remaining get higher priority
+  - < 25% remaining: +3.0 urgency
+  - < 50% remaining: +1.5 urgency
+  - > 50% remaining: +0.5 urgency
+- **Task age**: Older tasks get a small boost (+0.1 per 30 days, max +2.0)
+- **Status**: Only pending tasks are included in priority calculation
+
+Priority tasks exclude tasks already in the clock stack, as those are already being worked on.
+
+**Examples:**
+```bash
+# Show dashboard
+task status
+
+# JSON output
+task status --json
+```
+
+**Output Format:**
+```
+=== Clock Status ===
+Clocked IN on task 1 (2h30m)
+
+=== Clock Stack (Top 3) ===
+[0] 1: Fix bug project:work +urgent due:2026-01-15 alloc:2h
+[1] 2: Review PR project:work +code-review
+[2] 3: Write docs project:docs
+
+=== Priority Tasks (Top 3) ===
+4: Critical bug fix project:work +urgent due:2026-01-10 (priority: 15.2)
+5: Documentation update project:docs due:2026-01-20 (priority: 8.5)
+6: Code review project:work +code-review (priority: 1.5)
+
+=== Today's Sessions ===
+5 session(s), 4h30m
+
+=== Overdue Tasks ===
+2 task(s) overdue
+```
+
+**JSON Output:**
+The `--json` flag outputs structured data:
+```json
+{
+  "clock": {
+    "state": "in",
+    "task_id": 1,
+    "duration_secs": 9000
+  },
+  "clock_stack": [
+    {
+      "position": 0,
+      "id": 1,
+      "description": "Fix bug",
+      "status": "pending",
+      "project_id": 1,
+      "tags": ["urgent"],
+      "due_ts": 1705276800,
+      "allocation_secs": 7200
+    }
+  ],
+  "today_sessions": {
+    "count": 5,
+    "total_duration_secs": 16200
+  },
+            "overdue": {
+                "count": 2,
+                "next_overdue_ts": null
+            },
+            "priority_tasks": [
+                {
+                    "id": 4,
+                    "description": "Critical bug fix",
+                    "status": "pending",
+                    "project_id": 1,
+                    "tags": ["urgent"],
+                    "due_ts": 1705276800,
+                    "allocation_secs": null,
+                    "priority": 15.2
+                }
+            ]
+        }
+        ```
 
 ---
 

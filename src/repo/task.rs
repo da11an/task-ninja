@@ -539,4 +539,24 @@ impl TaskRepo {
         
         Ok(())
     }
+    
+    /// Get total logged time for a task (sum of all session durations)
+    pub fn get_total_logged_time(conn: &Connection, task_id: i64) -> Result<i64> {
+        use crate::repo::SessionRepo;
+        let sessions = SessionRepo::get_by_task(conn, task_id)?;
+        let now = chrono::Utc::now().timestamp();
+        
+        let total: i64 = sessions.iter()
+            .filter_map(|s| {
+                if let Some(end_ts) = s.end_ts {
+                    Some(end_ts - s.start_ts)
+                } else {
+                    // Open session - use current time
+                    Some(now - s.start_ts)
+                }
+            })
+            .sum();
+        
+        Ok(total)
+    }
 }

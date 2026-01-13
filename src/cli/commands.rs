@@ -12,6 +12,7 @@ use crate::filter::{parse_filter, filter_tasks};
 use crate::recur::RecurGenerator;
 use crate::cli::status;
 use crate::cli::abbrev;
+use chrono::{Local, TimeZone, Datelike};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
 
@@ -129,6 +130,12 @@ pub enum Commands {
         /// Task ID or filter (optional)
         #[arg(long)]
         task: Option<String>,
+    },
+    /// Show dashboard with system status
+    Status {
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -297,7 +304,7 @@ pub fn run() -> Result<()> {
         let first_arg = &args[0];
         // Check if it's a numeric ID or ID spec (not a global subcommand)
         let is_global_subcommand = matches!(first_arg.as_str(), 
-            "projects" | "clock" | "recur" | "sessions" | "add" | "list" | "modify" | "annotate" | "done" | "delete" | "show");
+            "projects" | "clock" | "recur" | "sessions" | "add" | "list" | "modify" | "annotate" | "done" | "delete" | "show" | "status");
         
         if !is_global_subcommand {
             // Try to parse as task ID spec
@@ -312,60 +319,16 @@ pub fn run() -> Result<()> {
     let is_help_request = args.is_empty() || 
         args.iter().any(|a| a == "--help" || a == "-h" || a == "help");
     
-    // Check if this is a command without subcommand (would show help)
-    let is_command_without_subcommand = args.len() == 1 && matches!(
-        args[0].as_str(),
-        "projects" | "clock" | "recur" | "sessions"
-    );
-    
-    // If help would be shown, compute and display status first
-    if is_help_request || is_command_without_subcommand {
-        let conn = match DbConnection::connect() {
-            Ok(c) => c,
-            Err(_) => {
-                // If DB connection fails, just show help normally
-                let cli = Cli::parse();
-                return handle_command(cli);
-            }
-        };
-        
-        // Compute and display status based on command
-        // Print status BEFORE clap's help output
-        if args.is_empty() || (is_help_request && !is_command_without_subcommand) {
-            // Root command help - print status first, then let clap show help
-            let status_line = status::compute_root_status(&conn)
-                .unwrap_or_else(|_| "Status unavailable".to_string());
-            // Flush stderr to ensure status appears before help
-            use std::io::Write;
-            let _ = std::io::stderr().write_fmt(format_args!("Status:\n  {}\n\n", status_line));
-            let _ = std::io::stderr().flush();
-            // Now let clap handle the help (will exit after printing)
-            match Cli::try_parse() {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    e.print()?;
-                    return Ok(());
-                }
-            }
-        } else if is_command_without_subcommand {
-            // Command without subcommand - show command-specific status
-            let status_line = match args[0].as_str() {
-                "projects" => status::compute_projects_status(&conn),
-                "clock" => status::compute_clock_status(&conn),
-                "recur" => status::compute_recur_status(&conn),
-                "sessions" => status::compute_sessions_status(&conn),
-                _ => Ok("Status unavailable".to_string()),
-            }.unwrap_or_else(|_| "Status unavailable".to_string());
-            
-            eprintln!("Status:\n  {}\n", status_line);
-            // Now let clap show help for the specific command (will exit after printing)
-            let help_args = vec!["task".to_string(), args[0].clone(), "--help".to_string()];
-            match Cli::try_parse_from(help_args) {
-                Ok(_) => return Ok(()),
-                Err(e) => {
-                    e.print()?;
-                    return Ok(());
-                }
+    // Note: Status lines have been removed from individual commands.
+    // Use `task status` command for a consolidated dashboard view.
+    // If help would be shown, just show help normally
+    if is_help_request {
+        // Let clap handle the help (will exit after printing)
+        match Cli::try_parse() {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                e.print()?;
+                return Ok(());
             }
         }
     }
@@ -402,13 +365,7 @@ fn handle_command(cli: Cli) -> Result<()> {
             if let Some(annotation_id) = delete {
                 handle_annotation_delete(target, annotation_id)
             } else if note.is_empty() {
-                // Show status for annotate command without arguments
-                let conn = DbConnection::connect()
-                    .context("Failed to connect to database")?;
-                let status_line = status::compute_annotate_status(&conn)
-                    .unwrap_or_else(|_| "Status unavailable".to_string());
-                // Print status first, then let clap show help
-                eprintln!("Status:\n  {}\n", status_line);
+                // Show help for annotate command without arguments
                 let help_args = vec!["task".to_string(), "annotate".to_string(), "--help".to_string()];
                 let _ = Cli::try_parse_from(help_args);
                 Ok(())
@@ -448,6 +405,9 @@ fn handle_command(cli: Cli) -> Result<()> {
                     handle_sessions_delete(session_id, yes)
                 }
             }
+        }
+        Commands::Status { json } => {
+            handle_status(json)
         }
     }
 }
@@ -2309,4 +2269,160 @@ fn handle_recur(subcommand: RecurCommands) -> Result<()> {
             Ok(())
         }
     }
+}
+
+fn handle_status(json: bool) -> Result<()> {
+    use crate::cli::output::format_dashboard;
+    use crate::models::TaskStatus;
+    
+    let conn = DbConnection::connect()?;
+    
+    // Query clock state and current task
+    let open_session = SessionRepo::get_open(&conn)?;
+    let stack = StackRepo::get_or_create_default(&conn)?;
+    let stack_items = StackRepo::get_items(&conn, stack.id.unwrap())?;
+    
+    let clock_state = if let Some(session) = &open_session {
+        let duration = chrono::Utc::now().timestamp() - session.start_ts;
+        if let Some(top_item) = stack_items.first() {
+            if session.task_id == top_item.task_id {
+                Some((session.task_id, duration))
+            } else {
+                Some((top_item.task_id, 0)) // Clocked out but has task in stack
+            }
+        } else {
+            Some((session.task_id, duration)) // Clocked in but no stack
+        }
+    } else if let Some(top_item) = stack_items.first() {
+        Some((top_item.task_id, 0)) // Clocked out, task in stack
+    } else {
+        None // No clock, no stack
+    };
+    
+    // Query top 3 clock stack tasks with details
+    let clock_stack_tasks: Vec<(usize, Task, Vec<String>)> = stack_items
+        .iter()
+        .take(3)
+        .enumerate()
+        .filter_map(|(idx, item)| {
+            if let Ok(Some(task)) = TaskRepo::get_by_id(&conn, item.task_id) {
+                if let Ok(tags) = TaskRepo::get_tags(&conn, item.task_id) {
+                    return Some((idx, task, tags));
+                }
+            }
+            None
+        })
+        .collect();
+    
+    // Query today's session summary
+    let now = chrono::Utc::now();
+    let today_start = Local.with_ymd_and_hms(
+        now.year(), now.month(), now.day(), 0, 0, 0
+    ).single()
+    .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
+    .unwrap_or(0);
+    
+    let all_sessions = SessionRepo::list_all(&conn)?;
+    let today_sessions: Vec<_> = all_sessions.iter()
+        .filter(|s| s.start_ts >= today_start)
+        .collect();
+    
+    let today_duration: i64 = today_sessions.iter()
+        .filter_map(|s| {
+            if let Some(end_ts) = s.end_ts {
+                Some(end_ts - s.start_ts)
+            } else {
+                Some(now.timestamp() - s.start_ts)
+            }
+        })
+        .sum();
+    
+    // Query overdue tasks (due_ts < now && status = pending)
+    let all_tasks = TaskRepo::list_all(&conn)?;
+    let now_ts = chrono::Utc::now().timestamp();
+    
+    let overdue_tasks: Vec<_> = all_tasks.iter()
+        .filter(|(task, _)| {
+            task.status == TaskStatus::Pending &&
+            task.due_ts.is_some() &&
+            task.due_ts.unwrap() < now_ts
+        })
+        .collect();
+    
+    // Calculate next overdue date if none overdue
+    let next_overdue = if overdue_tasks.is_empty() {
+        all_tasks.iter()
+            .filter(|(task, _)| {
+                task.status == TaskStatus::Pending &&
+                task.due_ts.is_some() &&
+                task.due_ts.unwrap() >= now_ts
+            })
+            .map(|(task, _)| task.due_ts.unwrap())
+            .min()
+    } else {
+        None
+    };
+    
+    // Query top 3 priority tasks NOT in clock stack
+    use crate::cli::priority::get_top_priority_tasks;
+    let stack_task_ids: Vec<i64> = stack_items.iter().map(|item| item.task_id).collect();
+    let priority_tasks = get_top_priority_tasks(&conn, &stack_task_ids, 3)?;
+    
+    // Format and display dashboard
+    if json {
+        let dashboard_json = serde_json::json!({
+            "clock": {
+                "state": if clock_state.is_some() { "in" } else { "out" },
+                "task_id": clock_state.map(|(id, _)| id),
+                "duration_secs": clock_state.map(|(_, d)| d),
+            },
+            "clock_stack": clock_stack_tasks.iter().map(|(idx, task, tags)| {
+                serde_json::json!({
+                    "position": idx,
+                    "id": task.id,
+                    "description": task.description,
+                    "status": task.status.as_str(),
+                    "project_id": task.project_id,
+                    "tags": tags,
+                    "due_ts": task.due_ts,
+                    "allocation_secs": task.alloc_secs,
+                })
+            }).collect::<Vec<_>>(),
+            "today_sessions": {
+                "count": today_sessions.len(),
+                "total_duration_secs": today_duration,
+            },
+            "overdue": {
+                "count": overdue_tasks.len(),
+                "next_overdue_ts": next_overdue,
+            },
+            "priority_tasks": priority_tasks.iter().map(|(task, tags, priority)| {
+                serde_json::json!({
+                    "id": task.id,
+                    "description": task.description,
+                    "status": task.status.as_str(),
+                    "project_id": task.project_id,
+                    "tags": tags,
+                    "due_ts": task.due_ts,
+                    "allocation_secs": task.alloc_secs,
+                    "priority": priority,
+                })
+            }).collect::<Vec<_>>(),
+        });
+        println!("{}", serde_json::to_string_pretty(&dashboard_json)?);
+    } else {
+        let dashboard = format_dashboard(
+            &conn,
+            clock_state,
+            &clock_stack_tasks,
+            &priority_tasks,
+            today_sessions.len(),
+            today_duration,
+            overdue_tasks.len(),
+            next_overdue,
+        )?;
+        print!("{}", dashboard);
+    }
+    
+    Ok(())
 }

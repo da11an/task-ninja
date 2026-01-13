@@ -25,8 +25,8 @@ pub fn find_unique_command<'a>(prefix: &str, commands: &'a [&str]) -> Result<&'a
 
 /// Top-level commands in Task Ninja
 pub const TOP_LEVEL_COMMANDS: &[&str] = &[
-    "projects", "add", "list", "modify", "stack", "clock", 
-    "annotate", "done", "delete", "recur", "sessions"
+    "projects", "add", "list", "modify", "clock", 
+    "annotate", "done", "delete", "recur", "sessions", "status", "show"
 ];
 
 /// Project subcommands
@@ -34,15 +34,12 @@ pub const PROJECT_COMMANDS: &[&str] = &[
     "add", "list", "rename", "archive", "unarchive"
 ];
 
-/// Stack subcommands
-pub const STACK_COMMANDS: &[&str] = &[
-    "show", "enqueue", "pick", "roll", "drop", "clear"
+/// Clock subcommands (includes stack operations)
+/// Note: Stack operations (enqueue, pick, roll, drop, clear) are under clock, not a separate stack command
+pub const CLOCK_STACK_COMMANDS: &[&str] = &[
+    "list", "enqueue", "pick", "roll", "drop", "clear", "in", "out"
 ];
 
-/// Clock subcommands
-pub const CLOCK_COMMANDS: &[&str] = &[
-    "in", "out"
-];
 
 /// Recur subcommands
 pub const RECUR_COMMANDS: &[&str] = &[
@@ -63,8 +60,7 @@ pub const TASK_SUBCOMMANDS: &[&str] = &[
 pub fn get_subcommands(command: &str) -> Option<&'static [&'static str]> {
     match command {
         "projects" => Some(PROJECT_COMMANDS),
-        "stack" => Some(STACK_COMMANDS),
-        "clock" => Some(CLOCK_COMMANDS),
+        "clock" => Some(CLOCK_STACK_COMMANDS),
         "recur" => Some(RECUR_COMMANDS),
         "sessions" => Some(SESSIONS_COMMANDS),
         _ => None,

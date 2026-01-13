@@ -35,6 +35,9 @@ pub enum Commands {
         /// Automatically clock in after creating task
         #[arg(long = "clock-in")]
         clock_in: bool,
+        /// Automatically create project if it doesn't exist (non-interactive)
+        #[arg(long = "auto-create-project")]
+        auto_create_project: bool,
         /// Task description and fields (e.g., "fix bug project:work +urgent")
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
@@ -371,7 +374,7 @@ pub fn run() -> Result<()> {
 fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
-        Commands::Add { args, clock_in } => handle_task_add(args, clock_in),
+        Commands::Add { args, clock_in, auto_create_project } => handle_task_add(args, clock_in, auto_create_project),
         Commands::List { filter, json } => {
             handle_task_list(filter, json)
         },
@@ -430,6 +433,29 @@ fn handle_command(cli: Cli) -> Result<()> {
                     handle_sessions_delete(session_id, yes)
                 }
             }
+        }
+    }
+}
+
+/// Prompt user to create a new project
+/// Returns: Some(true) if project should be created, Some(false) if skipped, None if cancelled
+fn prompt_create_project(project_name: &str) -> Result<Option<bool>> {
+    eprint!("This is a new project '{}'. Add new project? [y/n/c] (default: c): ", project_name);
+    std::io::Write::flush(&mut std::io::stderr())
+        .map_err(|e| anyhow::anyhow!("Failed to flush stderr: {}", e))?;
+    
+    let mut input = String::new();
+    std::io::stdin().read_line(&mut input)
+        .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
+    
+    let input = input.trim().to_lowercase();
+    match input.as_str() {
+        "y" | "yes" => Ok(Some(true)),
+        "n" | "no" => Ok(Some(false)),
+        "c" | "cancel" | "" => Ok(None),
+        _ => {
+            println!("Invalid response. Cancelled.");
+            Ok(None)
         }
     }
 }
@@ -569,7 +595,7 @@ fn handle_projects(cmd: ProjectCommands) -> Result<()> {
     }
 }
 
-fn handle_task_add(args: Vec<String>, clock_in: bool) -> Result<()> {
+fn handle_task_add(args: Vec<String>, clock_in: bool, auto_create_project: bool) -> Result<()> {
     if args.is_empty() {
         user_error("Task description is required");
     }
@@ -598,7 +624,40 @@ fn handle_task_add(args: Vec<String>, clock_in: bool) -> Result<()> {
         if let Some(p) = project {
             Some(p.id.unwrap())
         } else {
-            project_not_found_error(&conn, &project_name);
+            // Project doesn't exist - prompt user or auto-create
+            if auto_create_project {
+                // Auto-create project
+                if let Err(e) = validate_project_name(&project_name) {
+                    user_error(&e);
+                }
+                let project = ProjectRepo::create(&conn, &project_name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create project: {}", e))?;
+                println!("Created project '{}' (id: {})", project.name, project.id.unwrap());
+                Some(project.id.unwrap())
+            } else {
+                // Interactive prompt
+                match prompt_create_project(&project_name)? {
+                    Some(true) => {
+                        // User said yes - create project
+                        if let Err(e) = validate_project_name(&project_name) {
+                            user_error(&e);
+                        }
+                        let project = ProjectRepo::create(&conn, &project_name)
+                            .map_err(|e| anyhow::anyhow!("Failed to create project: {}", e))?;
+                        println!("Created project '{}' (id: {})", project.name, project.id.unwrap());
+                        Some(project.id.unwrap())
+                    }
+                    Some(false) => {
+                        // User said no - skip project, create task without it
+                        None
+                    }
+                    None => {
+                        // User cancelled
+                        println!("Cancelled.");
+                        return Ok(());
+                    }
+                }
+            }
         }
     } else {
         None

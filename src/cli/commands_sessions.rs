@@ -492,7 +492,7 @@ fn format_conflict_error(session: &Session, conflicts: &[Session], conn: &Connec
     );
     
     for conflict in conflicts {
-        let conflict_task = TaskRepo::get_by_id(conn, conflict.task_id)?
+        let _conflict_task = TaskRepo::get_by_id(conn, conflict.task_id)?
             .ok_or_else(|| anyhow::anyhow!("Task {} not found", conflict.task_id))?;
         msg.push_str(&format!(
             "    - Session {} (Task {}): {} - {}\n",

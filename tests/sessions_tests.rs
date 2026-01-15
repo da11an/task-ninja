@@ -224,7 +224,7 @@ fn test_sessions_show_for_task() {
     get_task_cmd(&temp_dir).args(&["clock", "out"]).assert().success();
     
     // Show most recent session for task (using --task flag for backward compatibility)
-    get_task_cmd(&temp_dir).args(&["sessions", "show", "--task", "1"]).assert().success()
+    get_task_cmd(&temp_dir).args(&["sessions", "--task", "1", "show"]).assert().success()
         .stdout(predicates::str::contains("Task 1"));
     
     drop(temp_dir);
@@ -282,7 +282,7 @@ fn test_sessions_modify_start_time() {
     
     // Modify start time
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "start:09:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "start:09:00"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -308,7 +308,7 @@ fn test_sessions_modify_end_time() {
     
     // Modify end time
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "end:17:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "end:17:00"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -334,7 +334,7 @@ fn test_sessions_modify_both_times() {
     
     // Modify both start and end times
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "start:09:00", "end:17:00", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "start:09:00", "end:17:00"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -360,7 +360,7 @@ fn test_sessions_modify_end_none() {
     
     // Make session open (clear end time)
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "end:none", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "end:none"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -391,7 +391,7 @@ fn test_sessions_modify_end_now() {
     
     // Close session (set end to now)
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "end:now", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "end:now"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));
@@ -411,7 +411,7 @@ fn test_sessions_modify_invalid_session_id() {
     
     // Try to modify non-existent session
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", "999", "start:09:00", "--yes"])
+        .args(&["sessions", "modify", "999", "--yes", "start:09:00"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("not found"));
@@ -436,7 +436,7 @@ fn test_sessions_modify_running_session_end_none() {
     
     // Try to clear end time of running session (should fail)
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session_id.to_string(), "end:none", "--yes"])
+        .args(&["sessions", "modify", &session_id.to_string(), "--yes", "end:none"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("already open"));
@@ -471,7 +471,7 @@ fn test_sessions_modify_overlap_detection() {
     // Try to modify second session to start at 09:00 (would overlap with first session 09:00-11:00)
     // This should fail without --force because it would overlap with first session
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session2_id.to_string(), "start:09:00", "--yes"])
+        .args(&["sessions", "modify", &session2_id.to_string(), "--yes", "start:09:00"])
         .assert()
         .failure()
         .stderr(predicates::str::contains("conflicts"));
@@ -505,7 +505,7 @@ fn test_sessions_modify_overlap_force() {
     
     // Modify with --force (should succeed despite conflicts)
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "modify", &session2_id.to_string(), "start:09:00", "--yes", "--force"])
+        .args(&["sessions", "modify", &session2_id.to_string(), "--yes", "--force", "start:09:00"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Modified session"));

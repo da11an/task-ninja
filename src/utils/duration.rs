@@ -10,7 +10,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! ```text
 //! 1h       // 1 hour
 //! 2h30m    // 2 hours 30 minutes
 //! 1d2h     // 1 day 2 hours

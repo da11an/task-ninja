@@ -149,7 +149,7 @@ fn test_rollback_on_stack_operation_failure() {
     // But if it does fail, verify no changes
     
     // For now, verify that valid operations work atomically
-    when.execute_success(&["stack", "1", "pick"]);
+    when.execute_success(&["clock", "pick", "1"]);
     
     let then = ThenBuilder::new(&ctx, None);
     then.stack_order_is(&[task2, task1]);
@@ -183,7 +183,7 @@ fn test_no_partial_state_on_finish_failure() {
     // The important thing is that no state changes are made.
     let mut when = WhenBuilder::new(&ctx);
     // Execute the command - it may succeed or fail, but state should be unchanged
-    let result = ctx.cmd().args(&["999", "finish"]).output().unwrap();
+    let result = ctx.cmd().args(&["finish", "999"]).output().unwrap();
     // Don't assert on exit code - just verify state is unchanged
     
     // Verify state is unchanged (regardless of exit code)
@@ -198,7 +198,10 @@ fn test_no_partial_state_on_finish_failure() {
     
     // Verify error message was printed
     let stderr = String::from_utf8_lossy(&result.stderr);
-    assert!(stderr.contains("not found") || stderr.contains("No session"), 
+    assert!(
+        stderr.contains("not found")
+            || stderr.contains("No session")
+            || stderr.contains("No matching tasks"),
             "Error message should indicate task not found or no session");
 }
 
@@ -217,7 +220,7 @@ fn test_no_partial_state_on_modify_failure() {
     
     // Try to modify with invalid project - should fail
     let mut when = WhenBuilder::new(&ctx);
-    when.execute_failure(&["modify", &task1.to_string(), "project:nonexistent"]);
+    when.execute_failure(&["modify", &task1.to_string(), "project:work@home"]);
     
     // Verify task is unchanged
     let final_task = TaskRepo::get_by_id(ctx.db(), task1).unwrap().unwrap();

@@ -4,7 +4,7 @@
 //!
 //! # Grammar
 //!
-//! ```
+//! ```text
 //! filter := term | filter "or" term | "not" term
 //! term := id | status:<status> | project:<name> | +tag | -tag | due:<expr> | ...
 //! ```
@@ -17,7 +17,7 @@
 //!
 //! # Examples
 //!
-//! ```
+//! ```text
 //! // Implicit AND
 //! project:work +urgent
 //!

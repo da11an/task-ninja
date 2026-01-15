@@ -202,11 +202,11 @@ struct ListRequest {
     save_alias: Option<String>,
 }
 
-fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListRequest {
+fn parse_list_request(tokens: Vec<String>) -> ListRequest {
     let mut filter_tokens = Vec::new();
     let mut sort_columns = Vec::new();
     let mut group_columns = Vec::new();
-    let mut save_alias = add_alias;
+    let mut save_alias: Option<String> = None;
     
     for token in tokens {
         if let Some(spec) = token.strip_prefix("sort:") {
@@ -518,11 +518,11 @@ fn format_sessions_list_table(
     output
 }
 
-pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: bool, add_alias: Option<String>) -> Result<()> {
+pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: bool) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let mut request = parse_list_request(filter_args, add_alias);
+    let mut request = parse_list_request(filter_args);
     if request.sort_columns.is_empty()
         && request.group_columns.is_empty()
         && request.filter_tokens.len() == 1

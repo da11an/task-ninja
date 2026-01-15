@@ -77,7 +77,7 @@ fn test_task_list_view_alias() {
     get_task_cmd(&temp_dir).args(&["add", "Beta task", "project:beta"]).assert().success();
     
     get_task_cmd(&temp_dir)
-        .args(&["list", "--add-alias", "myview", "project:alpha", "sort:project"])
+        .args(&["list", "project:alpha", "sort:project", "alias:myview"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Saved view 'myview'"));
@@ -100,7 +100,7 @@ fn test_sessions_list_view_alias() {
     get_task_cmd(&temp_dir).args(&["clock", "out"]).assert().success();
     
     get_task_cmd(&temp_dir)
-        .args(&["sessions", "list", "--add-alias", "mysessions", "sort:start"])
+        .args(&["sessions", "list", "sort:start", "alias:mysessions"])
         .assert()
         .success()
         .stdout(predicates::str::contains("Saved view 'mysessions'"));

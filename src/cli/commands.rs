@@ -55,9 +55,6 @@ pub enum Commands {
         /// Show Due dates as relative time (e.g., "2 days ago", "in 3 days")
         #[arg(long)]
         relative: bool,
-        /// Save current list options as a named view
-        #[arg(long = "add-alias")]
-        add_alias: Option<String>,
     },
     /// Show detailed summary of task(s)
     Show {
@@ -227,9 +224,6 @@ pub enum SessionsCommands {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
-        /// Save current list options as a named view
-        #[arg(long = "add-alias")]
-        add_alias: Option<String>,
     },
     /// Show detailed session information
     Show,
@@ -398,8 +392,8 @@ fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
         Commands::Add { args, clock_in, auto_create_project } => handle_task_add(args, clock_in, auto_create_project),
-        Commands::List { filter, json, relative, add_alias } => {
-            handle_task_list(filter, json, relative, add_alias)
+        Commands::List { filter, json, relative } => {
+            handle_task_list(filter, json, relative)
         },
         Commands::Show { target } => handle_task_summary(target),
         Commands::Modify { target, args, yes, interactive } => {
@@ -464,15 +458,15 @@ fn handle_command(cli: Cli) -> Result<()> {
         }
         Commands::Sessions { subcommand, task } => {
             match subcommand {
-                SessionsCommands::List { filter, json, add_alias } => {
+                SessionsCommands::List { filter, json } => {
                     // If filter arguments provided, use them; otherwise fall back to --task flag for backward compatibility
                     if !filter.is_empty() {
-                        handle_task_sessions_list_with_filter(filter, json, add_alias)
+                        handle_task_sessions_list_with_filter(filter, json)
                     } else if let Some(task_str) = task {
                         // Backward compatibility: support --task flag
-                        handle_task_sessions_list_with_filter(vec![task_str], json, add_alias)
+                        handle_task_sessions_list_with_filter(vec![task_str], json)
                     } else {
-                        handle_task_sessions_list_with_filter(vec![], json, add_alias)
+                        handle_task_sessions_list_with_filter(vec![], json)
                     }
                 }
                 SessionsCommands::Show => {
@@ -837,12 +831,12 @@ struct ListRequest {
     save_alias: Option<String>,
 }
 
-fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListRequest {
+fn parse_list_request(tokens: Vec<String>) -> ListRequest {
     let mut filter_tokens = Vec::new();
     let mut sort_columns = Vec::new();
     let mut group_columns = Vec::new();
     let mut hide_columns = Vec::new();
-    let mut save_alias = add_alias;
+    let mut save_alias: Option<String> = None;
     
     for token in tokens {
         if let Some(spec) = token.strip_prefix("sort:") {
@@ -877,11 +871,11 @@ fn looks_like_filter(token: &str) -> bool {
     token.contains(':') || token.starts_with('+') || token.starts_with('-') || token == "waiting"
 }
 
-fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool, add_alias: Option<String>) -> Result<()> {
+fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let mut request = parse_list_request(filter_args, add_alias);
+    let mut request = parse_list_request(filter_args);
     
     if request.sort_columns.is_empty()
         && request.group_columns.is_empty()

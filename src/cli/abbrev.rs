@@ -26,7 +26,7 @@ pub fn find_unique_command<'a>(prefix: &str, commands: &'a [&str]) -> Result<&'a
 /// Top-level commands in Task Ninja
 pub const TOP_LEVEL_COMMANDS: &[&str] = &[
     "projects", "add", "list", "modify", "clock", 
-    "annotate", "done", "delete", "enqueue", "recur", "sessions", "status", "show"
+    "annotate", "finish", "close", "delete", "enqueue", "recur", "sessions", "status", "show"
 ];
 
 /// Project subcommands
@@ -35,9 +35,9 @@ pub const PROJECT_COMMANDS: &[&str] = &[
 ];
 
 /// Clock subcommands (includes stack operations)
-/// Note: Stack operations (enqueue, pick, roll, drop, clear) are under clock, not a separate stack command
+/// Note: Stack operations (enqueue, pick, next, drop, clear) are under clock, not a separate stack command
 pub const CLOCK_STACK_COMMANDS: &[&str] = &[
-    "list", "enqueue", "pick", "roll", "drop", "clear", "in", "out"
+    "list", "enqueue", "pick", "next", "drop", "clear", "in", "out"
 ];
 
 
@@ -53,7 +53,7 @@ pub const SESSIONS_COMMANDS: &[&str] = &[
 
 /// Task subcommands (used with task <id> <subcommand> pattern)
 pub const TASK_SUBCOMMANDS: &[&str] = &[
-    "enqueue", "modify", "done", "delete", "annotate", "summary"
+    "enqueue", "modify", "finish", "close", "delete", "annotate", "summary"
 ];
 
 /// Get subcommands for a given top-level command
@@ -149,8 +149,10 @@ pub fn expand_command_abbreviations(args: Vec<String>) -> Result<Vec<String>, St
                 if !next_arg.starts_with('-') {
                     match find_unique_command(next_arg, TASK_SUBCOMMANDS) {
                         Ok(full_subcmd) => {
-                            expanded.push(arg.clone()); // Keep task ID
+                            // Normalize task-id-first syntax: task <id> <subcommand>
+                            // to task <subcommand> <id>
                             expanded.push(full_subcmd.to_string());
+                            expanded.push(arg.clone());
                             i += 2;
                             continue;
                         }
@@ -243,63 +245,59 @@ mod tests {
         // Test enqueue abbreviation
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "enq".to_string()]),
-            Ok(vec!["1".to_string(), "enqueue".to_string()])
+            Ok(vec!["enqueue".to_string(), "1".to_string()])
         );
         
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "enque".to_string()]),
-            Ok(vec!["1".to_string(), "enqueue".to_string()])
+            Ok(vec!["enqueue".to_string(), "1".to_string()])
         );
         
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "enqueue".to_string()]),
-            Ok(vec!["1".to_string(), "enqueue".to_string()])
+            Ok(vec!["enqueue".to_string(), "1".to_string()])
         );
         
         // Test modify abbreviation
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "mod".to_string()]),
-            Ok(vec!["1".to_string(), "modify".to_string()])
+            Ok(vec!["modify".to_string(), "1".to_string()])
         );
         
-        // Test done abbreviation
+        // Test finish abbreviation
         assert_eq!(
-            expand_command_abbreviations(vec!["1".to_string(), "don".to_string()]),
-            Ok(vec!["1".to_string(), "done".to_string()])
+            expand_command_abbreviations(vec!["1".to_string(), "fin".to_string()]),
+            Ok(vec!["finish".to_string(), "1".to_string()])
         );
         
         // Test delete abbreviation
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "del".to_string()]),
-            Ok(vec!["1".to_string(), "delete".to_string()])
+            Ok(vec!["delete".to_string(), "1".to_string()])
         );
         
         // Test annotate abbreviation
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "ann".to_string()]),
-            Ok(vec!["1".to_string(), "annotate".to_string()])
+            Ok(vec!["annotate".to_string(), "1".to_string()])
         );
         
         // Test summary abbreviation
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "sum".to_string()]),
-            Ok(vec!["1".to_string(), "summary".to_string()])
+            Ok(vec!["summary".to_string(), "1".to_string()])
         );
         
-        // Test ambiguous abbreviation (d matches done and delete)
-        let result = expand_command_abbreviations(vec!["1".to_string(), "d".to_string()]);
-        assert!(result.is_err());
-        if let Err(msg) = result {
-            assert!(msg.contains("Ambiguous task subcommand"));
-            assert!(msg.contains("done"));
-            assert!(msg.contains("delete"));
-        }
+        // Test that "d" uniquely matches "delete"
+        assert_eq!(
+            expand_command_abbreviations(vec!["1".to_string(), "d".to_string()]),
+            Ok(vec!["delete".to_string(), "1".to_string()])
+        );
         
         // Test that "de" uniquely matches "delete" (not ambiguous)
-        // "de" matches "delete" but not "done" (which starts with "do")
         assert_eq!(
             expand_command_abbreviations(vec!["1".to_string(), "de".to_string()]),
-            Ok(vec!["1".to_string(), "delete".to_string()])
+            Ok(vec!["delete".to_string(), "1".to_string()])
         );
         
         // Test non-task-subcommand (should pass through)

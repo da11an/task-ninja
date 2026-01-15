@@ -5,6 +5,7 @@ pub mod session;
 pub mod annotation;
 pub mod event;
 pub mod template;
+pub mod view;
 
 pub use project::*;
 pub use task::*;
@@ -13,3 +14,4 @@ pub use session::*;
 pub use annotation::*;
 pub use event::*;
 pub use template::*;
+pub use view::*;

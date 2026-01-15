@@ -1,7 +1,7 @@
 // Sessions command handlers
 
 use crate::db::DbConnection;
-use crate::repo::{SessionRepo, TaskRepo, AnnotationRepo};
+use crate::repo::{SessionRepo, TaskRepo, AnnotationRepo, ViewRepo};
 use crate::models::Session;
 use crate::cli::error::{user_error, validate_task_id};
 use crate::filter::{parse_filter, filter_tasks};
@@ -11,6 +11,7 @@ use chrono::{Local, TimeZone};
 use rusqlite::Connection;
 use serde_json;
 use std::io::{self, Write};
+use std::cmp::Ordering;
 
 /// Format timestamp for display
 fn format_timestamp(ts: i64) -> String {
@@ -194,16 +195,318 @@ pub fn handle_task_sessions_show(task_id_opt: Option<String>) -> Result<()> {
 }
 
 /// Handle `task sessions list [<filter>...] [--json]` with filter support
-pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: bool) -> Result<()> {
+struct ListRequest {
+    filter_tokens: Vec<String>,
+    sort_columns: Vec<String>,
+    group_columns: Vec<String>,
+    save_alias: Option<String>,
+}
+
+fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListRequest {
+    let mut filter_tokens = Vec::new();
+    let mut sort_columns = Vec::new();
+    let mut group_columns = Vec::new();
+    let mut save_alias = add_alias;
+    
+    for token in tokens {
+        if let Some(spec) = token.strip_prefix("sort:") {
+            sort_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        } else if let Some(spec) = token.strip_prefix("group:") {
+            group_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        } else if let Some(name) = token.strip_prefix("alias:") {
+            if save_alias.is_none() && !name.is_empty() {
+                save_alias = Some(name.to_string());
+            }
+        } else {
+            filter_tokens.push(token);
+        }
+    }
+    
+    ListRequest {
+        filter_tokens,
+        sort_columns,
+        group_columns,
+        save_alias,
+    }
+}
+
+fn is_view_name_token(token: &str) -> bool {
+    !token.contains(':') && !token.starts_with('+') && !token.starts_with('-') && token.parse::<i64>().is_err()
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum SessionListColumn {
+    SessionId,
+    TaskId,
+    Description,
+    Start,
+    End,
+    Duration,
+}
+
+#[derive(Debug, Clone)]
+enum SortValue {
+    Int(i64),
+    Str(String),
+}
+
+#[derive(Debug, Clone)]
+struct SessionRow {
+    values: std::collections::HashMap<SessionListColumn, String>,
+    sort_values: std::collections::HashMap<SessionListColumn, Option<SortValue>>,
+}
+
+fn parse_session_column(name: &str) -> Option<SessionListColumn> {
+    match name.to_lowercase().as_str() {
+        "session" | "session_id" | "id" => Some(SessionListColumn::SessionId),
+        "task" | "task_id" => Some(SessionListColumn::TaskId),
+        "description" | "desc" => Some(SessionListColumn::Description),
+        "start" => Some(SessionListColumn::Start),
+        "end" => Some(SessionListColumn::End),
+        "duration" => Some(SessionListColumn::Duration),
+        _ => None,
+    }
+}
+
+fn session_column_label(column: SessionListColumn) -> &'static str {
+    match column {
+        SessionListColumn::SessionId => "Session ID",
+        SessionListColumn::TaskId => "Task",
+        SessionListColumn::Description => "Description",
+        SessionListColumn::Start => "Start",
+        SessionListColumn::End => "End",
+        SessionListColumn::Duration => "Duration",
+    }
+}
+
+fn compare_sort_values(a: &Option<SortValue>, b: &Option<SortValue>) -> Ordering {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => match (a, b) {
+            (SortValue::Int(a), SortValue::Int(b)) => a.cmp(b),
+            (SortValue::Str(a), SortValue::Str(b)) => a.cmp(b),
+            _ => sort_value_as_string(a).cmp(&sort_value_as_string(b)),
+        },
+    }
+}
+
+fn sort_value_as_string(value: &SortValue) -> String {
+    match value {
+        SortValue::Int(v) => v.to_string(),
+        SortValue::Str(v) => v.clone(),
+    }
+}
+
+fn format_sessions_list_table(
+    sessions: &[Session],
+    tasks_by_id: &std::collections::HashMap<i64, String>,
+    sort_columns: &[String],
+    group_columns: &[String],
+) -> String {
+    if sessions.is_empty() {
+        return "No sessions found.".to_string();
+    }
+    
+    let mut rows: Vec<SessionRow> = Vec::new();
+    for session in sessions {
+        let desc = tasks_by_id.get(&session.task_id).cloned().unwrap_or_default();
+        let description = if desc.len() > 36 {
+            format!("{}..", &desc[..36])
+        } else {
+            desc.clone()
+        };
+        
+        let start_str = format_timestamp(session.start_ts);
+        let end_str = if let Some(end_ts) = session.end_ts {
+            format_timestamp(end_ts)
+        } else {
+            "(running)".to_string()
+        };
+        let duration_secs = session.duration_secs().unwrap_or_else(|| chrono::Utc::now().timestamp() - session.start_ts);
+        let duration_str = format_duration(duration_secs);
+        
+        let mut values = std::collections::HashMap::new();
+        values.insert(SessionListColumn::SessionId, session.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()));
+        values.insert(SessionListColumn::TaskId, session.task_id.to_string());
+        values.insert(SessionListColumn::Description, description);
+        values.insert(SessionListColumn::Start, start_str.clone());
+        values.insert(SessionListColumn::End, end_str.clone());
+        values.insert(SessionListColumn::Duration, duration_str.clone());
+        
+        let mut sort_values = std::collections::HashMap::new();
+        sort_values.insert(SessionListColumn::SessionId, session.id.map(SortValue::Int));
+        sort_values.insert(SessionListColumn::TaskId, Some(SortValue::Int(session.task_id)));
+        sort_values.insert(SessionListColumn::Description, Some(SortValue::Str(desc)));
+        sort_values.insert(SessionListColumn::Start, Some(SortValue::Int(session.start_ts)));
+        sort_values.insert(SessionListColumn::End, Some(SortValue::Int(session.end_ts.unwrap_or(0))));
+        sort_values.insert(SessionListColumn::Duration, Some(SortValue::Int(duration_secs)));
+        
+        rows.push(SessionRow { values, sort_values });
+    }
+    
+    if !sort_columns.is_empty() {
+        rows.sort_by(|a, b| {
+            for col_name in sort_columns {
+                if let Some(column) = parse_session_column(col_name) {
+                    let ordering = compare_sort_values(
+                        a.sort_values.get(&column).unwrap_or(&None),
+                        b.sort_values.get(&column).unwrap_or(&None),
+                    );
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                }
+            }
+            Ordering::Equal
+        });
+    }
+    
+    let mut columns: Vec<SessionListColumn> = Vec::new();
+    for col in sort_columns {
+        if let Some(column) = parse_session_column(col) {
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+    }
+    for column in [SessionListColumn::SessionId, SessionListColumn::TaskId, SessionListColumn::Description] {
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    for col in group_columns {
+        if let Some(column) = parse_session_column(col) {
+            if !columns.contains(&column) {
+                columns.push(column);
+            }
+        }
+    }
+    let default_columns = [
+        SessionListColumn::Start,
+        SessionListColumn::End,
+        SessionListColumn::Duration,
+    ];
+    for column in default_columns {
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    
+    let mut column_widths: std::collections::HashMap<SessionListColumn, usize> = std::collections::HashMap::new();
+    for column in &columns {
+        column_widths.insert(*column, session_column_label(*column).len().max(6));
+    }
+    for row in &rows {
+        for column in &columns {
+            if let Some(value) = row.values.get(column) {
+                let max_len = if *column == SessionListColumn::Description {
+                    value.len().min(50)
+                } else {
+                    value.len()
+                };
+                let entry = column_widths.entry(*column).or_insert(6);
+                *entry = (*entry).max(max_len);
+            }
+        }
+    }
+    
+    let mut output = String::new();
+    for (idx, column) in columns.iter().enumerate() {
+        let width = *column_widths.get(column).unwrap_or(&6);
+        if idx == columns.len() - 1 {
+            output.push_str(&format!("{:<width$}\n", session_column_label(*column), width = width));
+        } else {
+            output.push_str(&format!("{:<width$} ", session_column_label(*column), width = width));
+        }
+    }
+    
+    let total_width: usize = columns.iter()
+        .map(|col| column_widths.get(col).copied().unwrap_or(6))
+        .sum::<usize>() + (columns.len().saturating_sub(1));
+    output.push_str(&format!("{}\n", "-".repeat(total_width)));
+    
+    let mut last_group: Option<Vec<String>> = None;
+    for row in &rows {
+        if !group_columns.is_empty() {
+            let group_values: Vec<String> = group_columns.iter()
+                .filter_map(|name| parse_session_column(name))
+                .map(|column| row.values.get(&column).cloned().unwrap_or_default())
+                .collect();
+            if last_group.as_ref() != Some(&group_values) {
+                output.push_str(&format!("{}\n", "-".repeat(total_width)));
+                for (idx, column) in columns.iter().enumerate() {
+                    let width = *column_widths.get(column).unwrap_or(&6);
+                    let value = if group_columns.iter().any(|name| parse_session_column(name) == Some(*column)) {
+                        row.values.get(column).cloned().unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if idx == columns.len() - 1 {
+                        output.push_str(&format!("{:<width$}\n", value, width = width));
+                    } else {
+                        output.push_str(&format!("{:<width$} ", value, width = width));
+                    }
+                }
+                last_group = Some(group_values);
+            }
+        }
+        
+        for (idx, column) in columns.iter().enumerate() {
+            let width = *column_widths.get(column).unwrap_or(&6);
+            let raw_value = row.values.get(column).cloned().unwrap_or_default();
+            let value = if raw_value.len() > width {
+                format!("{}..", &raw_value[..width.saturating_sub(2)])
+            } else {
+                raw_value
+            };
+            if idx == columns.len() - 1 {
+                output.push_str(&format!("{:<width$}\n", value, width = width));
+            } else {
+                output.push_str(&format!("{:<width$} ", value, width = width));
+            }
+        }
+    }
+    
+    output
+}
+
+pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: bool, add_alias: Option<String>) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let sessions = if filter_args.is_empty() {
+    let mut request = parse_list_request(filter_args, add_alias);
+    if request.sort_columns.is_empty()
+        && request.group_columns.is_empty()
+        && request.filter_tokens.len() == 1
+        && is_view_name_token(&request.filter_tokens[0])
+    {
+        if let Some(view) = ViewRepo::get_by_name(&conn, "sessions", &request.filter_tokens[0])? {
+            request.filter_tokens = view.filter_tokens;
+            request.sort_columns = view.sort_columns;
+            request.group_columns = view.group_columns;
+        }
+    }
+    
+    if let Some(alias) = request.save_alias.clone() {
+        ViewRepo::upsert(
+            &conn,
+            &alias,
+            "sessions",
+            &request.filter_tokens,
+            &request.sort_columns,
+            &request.group_columns,
+        )?;
+        println!("Saved view '{}'.", alias);
+    }
+    
+    let sessions = if request.filter_tokens.is_empty() {
         // List all sessions
         SessionRepo::list_all(&conn)?
-    } else if filter_args.len() == 1 {
+    } else if request.filter_tokens.len() == 1 {
         // Single argument - try to parse as task ID first, otherwise treat as filter
-        match validate_task_id(&filter_args[0]) {
+        match validate_task_id(&request.filter_tokens[0]) {
             Ok(task_id) => {
                 // Single task ID
                 if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
@@ -213,7 +516,7 @@ pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: boo
             }
             Err(_) => {
                 // Treat as filter - aggregate sessions across all matching tasks
-                let filter_expr = match parse_filter(filter_args) {
+                let filter_expr = match parse_filter(request.filter_tokens) {
                     Ok(expr) => expr,
                     Err(e) => user_error(&format!("Filter parse error: {}", e)),
                 };
@@ -245,7 +548,7 @@ pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: boo
         }
     } else {
         // Multiple arguments - treat as filter
-        let filter_expr = match parse_filter(filter_args) {
+        let filter_expr = match parse_filter(request.filter_tokens) {
             Ok(expr) => expr,
             Err(e) => user_error(&format!("Filter parse error: {}", e)),
         };
@@ -296,45 +599,22 @@ pub fn handle_task_sessions_list_with_filter(filter_args: Vec<String>, json: boo
         }
         println!("{}", serde_json::to_string_pretty(&json_sessions)?);
     } else {
-        // Human-readable output
-        if sessions.is_empty() {
-            println!("No sessions found.");
-            return Ok(());
-        }
-        
-        println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", "Session ID", "Task", "Description", "Start", "End", "Duration");
-        println!("{}", "-".repeat(106));
-        
+        let mut tasks_by_id = std::collections::HashMap::new();
         for session in &sessions {
-            let task = TaskRepo::get_by_id(&conn, session.task_id)?
-                .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
-            
-            let session_id_str = session.id
-                .map(|id| id.to_string())
-                .unwrap_or_else(|| "?".to_string());
-            
-            let description = if task.description.len() > 36 {
-                format!("{}..", &task.description[..36])
-            } else {
-                task.description.clone()
-            };
-            
-            let start_str = format_timestamp(session.start_ts);
-            let end_str = if let Some(end_ts) = session.end_ts {
-                format_timestamp(end_ts)
-            } else {
-                "(running)".to_string()
-            };
-            
-            let duration_str = if let Some(duration) = session.duration_secs() {
-                format_duration(duration)
-            } else {
-                format_duration(chrono::Utc::now().timestamp() - session.start_ts)
-            };
-            
-            println!("{:<10} {:<6} {:<38} {:<20} {:<20} {:<12}", 
-                session_id_str, session.task_id, description, start_str, end_str, duration_str);
+            if !tasks_by_id.contains_key(&session.task_id) {
+                if let Ok(Some(task)) = TaskRepo::get_by_id(&conn, session.task_id) {
+                    tasks_by_id.insert(session.task_id, task.description);
+                }
+            }
         }
+        
+        let table = format_sessions_list_table(
+            &sessions,
+            &tasks_by_id,
+            &request.sort_columns,
+            &request.group_columns,
+        );
+        println!("{}", table);
     }
     
     Ok(())
@@ -593,19 +873,22 @@ pub fn handle_sessions_modify(session_id: i64, args: Vec<String>, yes: bool, for
     
     // Confirmation prompt
     if !yes {
-        println!("Modify session {}?", session_id);
+        let task = TaskRepo::get_by_id(&conn, session.task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
+        println!("Modify session {} (task {}: {})?", session_id, session.task_id, task.description);
         for change in &changes {
             println!("  {}", change);
         }
         if !conflicts.is_empty() {
             println!("\nWarning: This will create conflicts with {} other session(s).", conflicts.len());
         }
-        print!("Are you sure? (y/n): ");
+        print!("Are you sure? ([y]/n): ");
         io::stdout().flush()?;
         
         let mut input = String::new();
         io::stdin().read_line(&mut input)?;
-        if input.trim().to_lowercase() != "y" {
+        let input = input.trim().to_lowercase();
+        if !input.is_empty() && input != "y" && input != "yes" {
             println!("Cancelled.");
             return Ok(());
         }

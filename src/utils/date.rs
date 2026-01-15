@@ -120,6 +120,34 @@ pub fn parse_date_expr(expr: &str) -> Result<i64> {
             return parse_local_datetime(target_datetime);
         }
     }
+
+    // Relative date offsets without sign: 1w, 2weeks, 3 days, 1week
+    if let Some(offset) = parse_relative_offset_without_sign(&expr_lower)? {
+        let base_date = now.date_naive();
+        let target_date = base_date + chrono::Duration::days(offset);
+        let target_datetime = target_date.and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date"))?;
+        return parse_local_datetime(target_datetime);
+    }
+
+    // "in <n> <unit>" expressions
+    if let Some(expr) = expr_lower.strip_prefix("in ") {
+        if let Some(offset) = parse_relative_offset_without_sign(expr)? {
+            let base_date = now.date_naive();
+            let target_date = base_date + chrono::Duration::days(offset);
+            let target_datetime = target_date.and_hms_opt(0, 0, 0)
+                .ok_or_else(|| anyhow::anyhow!("Invalid date"))?;
+            return parse_local_datetime(target_datetime);
+        }
+    }
+
+    if expr_lower == "next week" {
+        let base_date = now.date_naive();
+        let target_date = base_date + chrono::Duration::days(7);
+        let target_datetime = target_date.and_hms_opt(0, 0, 0)
+            .ok_or_else(|| anyhow::anyhow!("Invalid date"))?;
+        return parse_local_datetime(target_datetime);
+    }
     
     // Time-only expressions: 9am, 14:30, noon, midnight
     if let Some(time) = parse_time_only(expr, &now)? {
@@ -199,6 +227,39 @@ fn parse_relative_offset(expr: &str) -> Result<Option<i64>> {
     };
     
     Ok(Some(sign * total_days))
+}
+
+/// Parse relative date offset without sign: 2d, 1week, 3 days, 1w
+fn parse_relative_offset_without_sign(expr: &str) -> Result<Option<i64>> {
+    let normalized = expr.replace(' ', "");
+    let mut chars = normalized.chars().peekable();
+    let mut num_str = String::new();
+    
+    while let Some(&ch) = chars.peek() {
+        if ch.is_ascii_digit() {
+            num_str.push(ch);
+            chars.next();
+        } else {
+            break;
+        }
+    }
+    
+    if num_str.is_empty() {
+        return Ok(None);
+    }
+    
+    let num = num_str.parse::<i64>()?;
+    let unit: String = chars.collect();
+    
+    let total_days = match unit.to_lowercase().as_str() {
+        "d" | "day" | "days" => num,
+        "w" | "week" | "weeks" => num * 7,
+        "m" | "month" | "months" => num * 30,
+        "y" | "year" | "years" => num * 365,
+        _ => return Ok(None),
+    };
+    
+    Ok(Some(total_days))
 }
 
 /// Parse time-only expression with 24-hour window rule
@@ -361,6 +422,11 @@ mod tests {
         assert!(parse_date_expr("+2d").is_ok());
         assert!(parse_date_expr("+1w").is_ok());
         assert!(parse_date_expr("-3d").is_ok());
+        assert!(parse_date_expr("1week").is_ok());
+        assert!(parse_date_expr("2weeks").is_ok());
+        assert!(parse_date_expr("1w").is_ok());
+        assert!(parse_date_expr("in 1 week").is_ok());
+        assert!(parse_date_expr("next week").is_ok());
     }
 
     #[test]

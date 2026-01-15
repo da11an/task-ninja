@@ -72,12 +72,14 @@ task add --auto-create-project "New feature" project:newproject
 # Automatically creates project if it doesn't exist
 ```
 
-### `task list [filter] [--json]`
+### `task list [filter] [--json] [--relative] [--add-alias <name>]`
 
 List tasks matching optional filter.
 
 **Options:**
 - `--json` - Output in JSON format
+- `--relative` - Show due dates as relative time
+- `--add-alias <name>` - Save current list options as a named view
 
 **Examples:**
 ```bash
@@ -89,6 +91,13 @@ task list project:work
 task list +urgent
 task list status:pending
 
+# Sort and group
+task list sort:project,priority group:kanban
+
+# Save a list view alias
+task list project:work sort:project --add-alias mywork
+task list mywork
+
 # JSON output
 task list --json
 task list project:work +urgent --json
@@ -99,7 +108,7 @@ task list project:work +urgent --json
 Modify one or more tasks.
 
 **Options:**
-- `--yes` - Apply to all matching tasks without confirmation
+- `--yes` - Apply to all matching tasks without confirmation (also auto-creates new projects if needed)
 - `--interactive` - Confirm each task one by one
 
 **Examples:**
@@ -113,11 +122,14 @@ task modify project:work description:Updated description
 # Modify with --yes flag
 task modify +urgent due:+1d --yes
 
+# Modify with new project (prompts to create)
+task modify 10 project:newproject
+
 # Clear attributes
 task 10 modify project:none due:none allocation:none
 ```
 
-### `task done [<id|filter>] [--at <expr>] [--next] [--yes] [--interactive]`
+### `task finish [<id|filter>] [--at <expr>] [--next] [--yes] [--interactive]`
 
 Complete one or more tasks.
 
@@ -129,8 +141,8 @@ Complete one or more tasks.
 5. If `--next` and clock stack non-empty: starts session for new clock[0]
 
 **Notes:**
-- `task done` (without ID/filter) requires clock[0] and a running session
-- `task done <id>` or `task done <filter>` works even if task is not clocked in
+- `task finish` (without ID/filter) requires clock[0] and a running session
+- `task finish <id>` or `task finish <filter>` works even if task is not clocked in
 - If a session exists for the task, it will be closed when completing
 
 **Options:**
@@ -142,39 +154,63 @@ Complete one or more tasks.
 **Examples:**
 ```bash
 # Complete current task (requires clocked in)
-task done
+task finish
 
 # Complete specific task (works even if not clocked in)
-task done 10
-
-# Complete task with running session (closes session)
-task done 10
+task finish 10
 
 # Complete with --next
-task done --next
+task finish --next
 
 # Complete at specific time
-task done 10 --at 17:00
+task finish 10 --at 17:00
 
 # Complete multiple tasks
-task done +urgent --yes
+task finish +urgent --yes
 ```
 
-### `task annotate <id|filter> <note...> [--delete <annotation_id>]`
+### `task close <id|filter> [--yes] [--interactive]`
+
+Close one or more tasks (sets status to `closed`).
+
+**Notes:**
+- `task close <id>` or `task close <filter>` works even if task is not clocked in
+- If a session exists for the task, it will be closed when closing
+
+**Options:**
+- `--yes` - Close all matching tasks without confirmation
+- `--interactive` - Confirm each task one by one
+
+**Examples:**
+```bash
+# Close a task
+task close 10
+
+# Close multiple tasks
+task close project:work --yes
+```
+
+### `task annotate [<id>] <note...> [--task <id>] [--delete <annotation_id>]`
 
 Add or delete annotation to/from a task.
 
 **Behavior:**
-- Annotates specified task
-- Links annotation to current session if clock is running
+- If `<id>` is provided and valid: annotate that task.
+- If `<id>` is missing or invalid and a task is clocked in: annotate the LIVE task.
+- If no task is clocked in: error.
+- Links annotation to current session if clock is running.
 
 **Options:**
+- `--task <id>` - Override task selection
 - `--delete <annotation_id>` - Delete a specific annotation
 
 **Examples:**
 ```bash
 # Annotate specific task
 task annotate 10 Found the bug in auth module
+
+# Annotate current LIVE task
+task annotate Investigating flaky tests
 
 # Multiple words in annotation
 task annotate 10 This is a longer note with multiple words
@@ -289,7 +325,7 @@ task projects archive old-project
 
 ## Clock Commands
 
-The clock stack is a queue of tasks. The task at position 0 (clock[0]) is the "active" task. Clock operations (pick, roll, drop) affect which task is active. Clock in/out controls timing.
+The clock stack is a queue of tasks. The task at position 0 (clock[0]) is the "active" task. Clock operations (pick, next, drop) affect which task is active. Clock in/out controls timing.
 
 ### `task clock list`
 
@@ -330,9 +366,9 @@ Move task at position to top of clock stack.
 task clock pick 2
 ```
 
-### `task clock roll [<n>]`
+### `task clock next [<n>]`
 
-Rotate clock stack by n positions (default: 1).
+Move to the next task by n positions (default: 1).
 
 **Behavior:**
 - If clock is running: closes current session and starts new one for new clock[0]
@@ -340,11 +376,11 @@ Rotate clock stack by n positions (default: 1).
 
 **Examples:**
 ```bash
-# Rotate once
-task clock roll
+# Move once
+task clock next
 
-# Rotate 2 positions
-task clock roll 2
+# Move 2 positions
+task clock next 2
 ```
 
 ### `task clock drop <index>`
@@ -430,7 +466,7 @@ task clock out 17:00
 
 ## Session Commands
 
-### `task sessions list [<filter>...] [--json]`
+### `task sessions list [<filter>...] [--json] [--add-alias <name>]`
 
 List session history.
 
@@ -443,6 +479,7 @@ List session history.
 **Options:**
 - `<filter>...` - Filter arguments (e.g., "project:work +urgent")
 - `--json` - Output in JSON format
+- `--add-alias <name>` - Save current list options as a named view
 - `--task <id|filter>` - Legacy flag (backward compatibility, use filter arguments instead)
 
 **Examples:**
@@ -461,6 +498,13 @@ task sessions list +urgent
 
 # Multiple filter arguments
 task sessions list project:work +urgent
+
+# Sort/group
+task sessions list sort:start group:task
+
+# Save a list view alias
+task sessions list project:work sort:start --add-alias worksessions
+task sessions list worksessions
 
 # JSON output
 task sessions list --json
@@ -598,7 +642,7 @@ Show dashboard with system status and actionable information.
 - `--json` - Output in JSON format
 
 **Sections:**
-1. **Clock Status** - Shows whether clocked in/out, current task, and duration if clocked in
+1. **Clock Status** - Shows whether clocked in/out, current task description, and duration if clocked in
 2. **Clock Stack (Top 3)** - Displays the top 3 tasks in the clock stack with full details
 3. **Priority Tasks (Top 3)** - Displays the top 3 priority tasks NOT in the clock stack, sorted by urgency score
 4. **Today's Sessions** - Summary of sessions today (count and total duration)
@@ -632,7 +676,7 @@ task status --json
 **Output Format:**
 ```
 === Clock Status ===
-Clocked IN on task 1 (2h30m)
+Clocked IN on task 1: Fix bug (2h30m)
 
 === Clock Stack (Top 3) ===
 [0] 1: Fix bug project:work +urgent due:2026-01-15 alloc:2h
@@ -748,7 +792,7 @@ Filters support AND, OR, and NOT operations with implicit AND.
 ### Filter Terms
 
 - `1` - Task ID
-- `status:<status>` - Task status (pending, completed, deleted)
+- `status:<status>` - Task status (pending, completed, closed, deleted)
 - `project:<name>` - Project name (supports prefix matching for nested projects)
 - `+<tag>` - Has tag
 - `-<tag>` - Does not have tag
@@ -756,6 +800,7 @@ Filters support AND, OR, and NOT operations with implicit AND.
 - `scheduled:<expr>` - Scheduled date
 - `wait:<expr>` - Wait date
 - `waiting` - Derived: wait_ts is set and in the future
+- `kanban:<status>` - Derived kanban status (proposed, paused, queued, working, next, live, done)
 
 ### Operators
 
@@ -764,6 +809,13 @@ Filters support AND, OR, and NOT operations with implicit AND.
 - **NOT** (explicit): Use `not` keyword
 
 **Precedence:** `not` > `and` > `or`
+
+### Abbreviations
+
+Filter tokens allow unambiguous abbreviations:
+- `st:pending` → `status:pending`
+- `proj:work` → `project:work`
+- Ambiguous prefixes error with suggestions.
 
 ### Examples
 
@@ -805,12 +857,16 @@ Date expressions support absolute dates, relative dates, and time-only expressio
 ```bash
 today
 tomorrow
-yesterday
 +1d      # 1 day from now
 +2w      # 2 weeks from now
 +3m      # 3 months from now
 +1y      # 1 year from now
 -1d      # 1 day ago
+1w       # 1 week from now
+1week    # 1 week from now
+2weeks   # 2 weeks from now
+in 1 week
+next week
 ```
 
 ### Time-Only Expressions

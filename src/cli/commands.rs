@@ -2,10 +2,10 @@ use clap::{Parser, Subcommand, Command};
 use rusqlite::Connection;
 use crate::db::DbConnection;
 use crate::models::Task;
-use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo};
+use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo, ViewRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_add};
-use crate::cli::output::{format_task_list_table, format_stack_display, format_task_summary, format_clock_list_table};
+use crate::cli::output::{format_task_list_table, format_stack_display, format_task_summary, format_clock_list_table, TaskListOptions};
 use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec};
 use crate::utils::{parse_date_expr, parse_duration, fuzzy};
 use crate::filter::{parse_filter, filter_tasks};
@@ -55,6 +55,9 @@ pub enum Commands {
         /// Show Due dates as relative time (e.g., "2 days ago", "in 3 days")
         #[arg(long)]
         relative: bool,
+        /// Save current list options as a named view
+        #[arg(long = "add-alias")]
+        add_alias: Option<String>,
     },
     /// Show detailed summary of task(s)
     Show {
@@ -82,17 +85,26 @@ pub enum Commands {
     },
     /// Annotate a task
     Annotate {
-        /// Task ID or filter
-        target: String,
+        /// Task ID (optional when clocked in)
+        target: Option<String>,
         /// Annotation note text
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         note: Vec<String>,
+        /// Override task selection
+        #[arg(long)]
+        task: Option<String>,
+        /// Apply to all matching tasks without confirmation
+        #[arg(long)]
+        yes: bool,
+        /// Force one-by-one confirmation for each task
+        #[arg(long)]
+        interactive: bool,
         /// Delete annotation by ID
         #[arg(long)]
         delete: Option<String>,
     },
-    /// Mark task(s) as done
-    Done {
+    /// Mark task(s) as finished
+    Finish {
         /// Task ID or filter (optional, defaults to clock[0])
         target: Option<String>,
         /// End time for session (date expression, defaults to now)
@@ -102,6 +114,17 @@ pub enum Commands {
         #[arg(long)]
         next: bool,
         /// Complete all matching tasks without confirmation
+        #[arg(long)]
+        yes: bool,
+        /// Force one-by-one confirmation for each task
+        #[arg(long)]
+        interactive: bool,
+    },
+    /// Mark task(s) as closed
+    Close {
+        /// Task ID or filter
+        target: String,
+        /// Close all matching tasks without confirmation
         #[arg(long)]
         yes: bool,
         /// Force one-by-one confirmation for each task
@@ -204,6 +227,9 @@ pub enum SessionsCommands {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+        /// Save current list options as a named view
+        #[arg(long = "add-alias")]
+        add_alias: Option<String>,
     },
     /// Show detailed session information
     Show,
@@ -252,8 +278,8 @@ pub enum ClockCommands {
         /// Clock position/index (0 = top, -1 = end)
         index: i32,
     },
-    /// Rotate clock stack
-    Roll {
+    /// Move to next task in clock stack
+    Next {
         /// Number of positions to rotate (default: 1)
         #[arg(default_value = "1")]
         n: i32,
@@ -307,13 +333,23 @@ pub fn run() -> Result<()> {
         }
     };
     
+    // Normalize "task <id> clock in" to "task clock in <id>"
+    if args.len() >= 3
+        && args[0].parse::<i64>().is_ok()
+        && args[1] == "clock"
+        && args[2] == "in"
+    {
+        let task_id = args.remove(0);
+        args.insert(2, task_id);
+    }
+    
     // Optional: Handle implicit defaults (task 1 → task show 1)
     // This is an optional extension - can be removed if not desired
     if args.len() == 1 {
         let first_arg = &args[0];
         // Check if it's a numeric ID or ID spec (not a global subcommand)
         let is_global_subcommand = matches!(first_arg.as_str(), 
-            "projects" | "clock" | "recur" | "sessions" | "add" | "list" | "modify" | "annotate" | "done" | "delete" | "show" | "status");
+            "projects" | "clock" | "recur" | "sessions" | "add" | "list" | "modify" | "annotate" | "finish" | "close" | "delete" | "show" | "status");
         
         if !is_global_subcommand {
             // Try to parse as task ID spec
@@ -362,28 +398,60 @@ fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
         Commands::Add { args, clock_in, auto_create_project } => handle_task_add(args, clock_in, auto_create_project),
-        Commands::List { filter, json, relative } => {
-            handle_task_list(filter, json, relative)
+        Commands::List { filter, json, relative, add_alias } => {
+            handle_task_list(filter, json, relative, add_alias)
         },
         Commands::Show { target } => handle_task_summary(target),
         Commands::Modify { target, args, yes, interactive } => {
             handle_task_modify(target, args, yes, interactive)
         }
         Commands::Clock { subcommand } => handle_clock(subcommand),
-        Commands::Annotate { target, note, delete } => {
+        Commands::Annotate { target, note, task, yes, interactive, delete } => {
             if let Some(annotation_id) = delete {
+                let target = target.or(task)
+                    .unwrap_or_else(|| user_error("Task ID is required to delete an annotation."));
                 handle_annotation_delete(target, annotation_id)
-            } else if note.is_empty() {
-                // Show help for annotate command without arguments
-                let help_args = vec!["task".to_string(), "annotate".to_string(), "--help".to_string()];
-                let _ = Cli::try_parse_from(help_args);
-                Ok(())
             } else {
-                handle_annotation_add_with_filter(target, note, false, false)
+                if target.is_none() && task.is_none() && note.is_empty() {
+                    let help_args = vec!["task".to_string(), "annotate".to_string(), "--help".to_string()];
+                    let _ = Cli::try_parse_from(help_args);
+                    return Ok(());
+                }
+                let mut note_args = note;
+                if let Some(target_token) = target {
+                    if task.is_some() {
+                        note_args.insert(0, target_token);
+                        handle_annotation_add(task, note_args)
+                    } else if let Ok(task_id) = validate_task_id(&target_token) {
+                        let conn = DbConnection::connect()
+                            .context("Failed to connect to database")?;
+                        if TaskRepo::get_by_id(&conn, task_id)?.is_some() {
+                            handle_annotation_add(Some(target_token), note_args)
+                        } else {
+                            let open_session = SessionRepo::get_open(&conn)?;
+                            if open_session.is_some() {
+                                note_args.insert(0, target_token);
+                                handle_annotation_add(None, note_args)
+                            } else {
+                                user_error(&format!("Task {} not found", task_id));
+                            }
+                        }
+                    } else if looks_like_filter(&target_token) {
+                        handle_annotation_add_with_filter(target_token, note_args, yes, interactive)
+                    } else {
+                        note_args.insert(0, target_token);
+                        handle_annotation_add(None, note_args)
+                    }
+                } else {
+                    handle_annotation_add(task, note_args)
+                }
             }
         }
-        Commands::Done { target, at, next, yes, interactive } => {
-            handle_task_done(target, at, next, yes, interactive)
+        Commands::Finish { target, at, next, yes, interactive } => {
+            handle_task_finish(target, at, next, yes, interactive)
+        }
+        Commands::Close { target, yes, interactive } => {
+            handle_task_close(target, yes, interactive)
         }
         Commands::Delete { target, yes, interactive } => {
             handle_task_delete(target, yes, interactive)
@@ -396,15 +464,15 @@ fn handle_command(cli: Cli) -> Result<()> {
         }
         Commands::Sessions { subcommand, task } => {
             match subcommand {
-                SessionsCommands::List { filter, json } => {
+                SessionsCommands::List { filter, json, add_alias } => {
                     // If filter arguments provided, use them; otherwise fall back to --task flag for backward compatibility
                     if !filter.is_empty() {
-                        handle_task_sessions_list_with_filter(filter, json)
+                        handle_task_sessions_list_with_filter(filter, json, add_alias)
                     } else if let Some(task_str) = task {
                         // Backward compatibility: support --task flag
-                        handle_task_sessions_list_with_filter(vec![task_str], json)
+                        handle_task_sessions_list_with_filter(vec![task_str], json, add_alias)
                     } else {
-                        handle_task_sessions_list_with_filter(vec![], json)
+                        handle_task_sessions_list_with_filter(vec![], json, add_alias)
                     }
                 }
                 SessionsCommands::Show => {
@@ -761,17 +829,86 @@ fn handle_task_add(mut args: Vec<String>, mut clock_in: bool, auto_create_projec
     Ok(())
 }
 
-fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool) -> Result<()> {
+struct ListRequest {
+    filter_tokens: Vec<String>,
+    sort_columns: Vec<String>,
+    group_columns: Vec<String>,
+    save_alias: Option<String>,
+}
+
+fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListRequest {
+    let mut filter_tokens = Vec::new();
+    let mut sort_columns = Vec::new();
+    let mut group_columns = Vec::new();
+    let mut save_alias = add_alias;
+    
+    for token in tokens {
+        if let Some(spec) = token.strip_prefix("sort:") {
+            sort_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        } else if let Some(spec) = token.strip_prefix("group:") {
+            group_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        } else if let Some(name) = token.strip_prefix("alias:") {
+            if save_alias.is_none() && !name.is_empty() {
+                save_alias = Some(name.to_string());
+            }
+        } else {
+            filter_tokens.push(token);
+        }
+    }
+    
+    ListRequest {
+        filter_tokens,
+        sort_columns,
+        group_columns,
+        save_alias,
+    }
+}
+
+fn is_view_name_token(token: &str) -> bool {
+    !token.contains(':') && !token.starts_with('+') && !token.starts_with('-') && token.parse::<i64>().is_err()
+}
+
+fn looks_like_filter(token: &str) -> bool {
+    token.contains(':') || token.starts_with('+') || token.starts_with('-') || token == "waiting"
+}
+
+fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool, add_alias: Option<String>) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
+    let mut request = parse_list_request(filter_args, add_alias);
+    
+    if request.sort_columns.is_empty()
+        && request.group_columns.is_empty()
+        && request.filter_tokens.len() == 1
+        && is_view_name_token(&request.filter_tokens[0])
+    {
+        if let Some(view) = ViewRepo::get_by_name(&conn, "tasks", &request.filter_tokens[0])? {
+            request.filter_tokens = view.filter_tokens;
+            request.sort_columns = view.sort_columns;
+            request.group_columns = view.group_columns;
+        }
+    }
+    
+    if let Some(alias) = request.save_alias.clone() {
+        ViewRepo::upsert(
+            &conn,
+            &alias,
+            "tasks",
+            &request.filter_tokens,
+            &request.sort_columns,
+            &request.group_columns,
+        )?;
+        println!("Saved view '{}'.", alias);
+    }
+    
     // Parse filter if provided
-    let tasks = if filter_args.is_empty() {
+    let tasks = if request.filter_tokens.is_empty() {
         TaskRepo::list_all(&conn)
             .context("Failed to list tasks")?
-    } else if filter_args.len() == 1 {
+    } else if request.filter_tokens.len() == 1 {
         // Single argument - try to parse as ID spec (range/list) first
-        match parse_task_id_spec(&filter_args[0]) {
+        match parse_task_id_spec(&request.filter_tokens[0]) {
             Ok(ids) => {
                 // Valid ID spec - fetch tasks by IDs
                 let mut tasks_by_id = Vec::new();
@@ -784,7 +921,7 @@ fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool) -> Res
             }
             Err(_) => {
                 // Not an ID spec - try as filter
-                let filter_expr = parse_filter(filter_args)
+                let filter_expr = parse_filter(request.filter_tokens)
                     .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
                 filter_tasks(&conn, &filter_expr)
                     .context("Failed to filter tasks")?
@@ -792,7 +929,7 @@ fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool) -> Res
         }
     } else {
         // Multiple arguments - treat as filter
-        let filter_expr = parse_filter(filter_args)
+        let filter_expr = parse_filter(request.filter_tokens)
             .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
         filter_tasks(&conn, &filter_expr)
             .context("Failed to filter tasks")?
@@ -821,7 +958,12 @@ fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool) -> Res
         println!("{}", serde_json::to_string_pretty(&json_tasks)?);
     } else {
         // Human-readable table output
-        let table = format_task_list_table(&conn, &tasks, relative)?;
+        let options = TaskListOptions {
+            use_relative_time: relative,
+            sort_columns: request.sort_columns,
+            group_columns: request.group_columns,
+        };
+        let table = format_task_list_table(&conn, &tasks, &options)?;
         print!("{}", table);
     }
     
@@ -894,7 +1036,7 @@ fn handle_task_modify(id_or_filter: String, args: Vec<String>, yes: bool, intera
                         std::io::stdin().read_line(&mut input)
                             .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
                         if input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes" {
-                            modify_single_task(&conn, task_id, &args)?;
+                            modify_single_task(&conn, task_id, &args, yes)?;
                         }
                     }
                     return Ok(());
@@ -912,7 +1054,7 @@ fn handle_task_modify(id_or_filter: String, args: Vec<String>, yes: bool, intera
                 std::io::stdin().read_line(&mut input)
                     .map_err(|e| anyhow::anyhow!("Failed to read input: {}", e))?;
                 if input.trim().to_lowercase() == "y" || input.trim().to_lowercase() == "yes" {
-                    modify_single_task(&conn, task_id, &args)?;
+                    modify_single_task(&conn, task_id, &args, yes)?;
                 }
             }
             return Ok(());
@@ -922,13 +1064,13 @@ fn handle_task_modify(id_or_filter: String, args: Vec<String>, yes: bool, intera
     
     // Apply modifications to all selected tasks
     for task_id in task_ids {
-        modify_single_task(&conn, task_id, &args)?;
+        modify_single_task(&conn, task_id, &args, yes)?;
     }
     
     Ok(())
 }
 
-fn modify_single_task(conn: &Connection, task_id: i64, args: &[String]) -> Result<()> {
+fn modify_single_task(conn: &Connection, task_id: i64, args: &[String], auto_create_project: bool) -> Result<()> {
     // Parse modification arguments
     let parsed = match parse_task_args(args.to_vec()) {
         Ok(p) => p,
@@ -953,8 +1095,34 @@ fn modify_single_task(conn: &Connection, task_id: i64, args: &[String]) -> Resul
             let project = ProjectRepo::get_by_name(&conn, project_name)?;
             if let Some(p) = project {
                 Some(Some(p.id.unwrap()))
+            } else if auto_create_project {
+                if let Err(e) = validate_project_name(&project_name) {
+                    user_error(&e);
+                }
+                let project = ProjectRepo::create(&conn, project_name)
+                    .map_err(|e| anyhow::anyhow!("Failed to create project: {}", e))?;
+                println!("Created project '{}' (id: {})", project.name, project.id.unwrap());
+                Some(Some(project.id.unwrap()))
             } else {
-                project_not_found_error(&conn, &project_name);
+                match prompt_create_project(project_name)? {
+                    Some(true) => {
+                        if let Err(e) = validate_project_name(&project_name) {
+                            user_error(&e);
+                        }
+                        let project = ProjectRepo::create(&conn, project_name)
+                            .map_err(|e| anyhow::anyhow!("Failed to create project: {}", e))?;
+                        println!("Created project '{}' (id: {})", project.name, project.id.unwrap());
+                        Some(Some(project.id.unwrap()))
+                    }
+                    Some(false) => {
+                        // Skip project update
+                        None
+                    }
+                    None => {
+                        println!("Cancelled.");
+                        return Ok(());
+                    }
+                }
             }
         }
     } else {
@@ -1318,7 +1486,7 @@ fn handle_clock(cmd: ClockCommands) -> Result<()> {
         ClockCommands::Pick { index } => {
             handle_stack_pick_with_clock(&conn, index, false, false)
         }
-        ClockCommands::Roll { n } => {
+        ClockCommands::Next { n } => {
             handle_stack_roll_with_clock(&conn, n, false, false)
         }
         ClockCommands::Drop { index } => {
@@ -1855,7 +2023,7 @@ fn handle_annotation_delete(task_id_str: String, annotation_id_str: String) -> R
     Ok(())
 }
 
-fn handle_task_done(
+fn handle_task_finish(
     id_or_filter_opt: Option<String>,
     at_opt: Option<String>,
     next: bool,
@@ -1956,8 +2124,8 @@ fn handle_task_done(
     if task_ids.len() > 1 {
         if !yes && !interactive {
             // Prompt for confirmation
-            println!("This will complete {} task(s).", task_ids.len());
-            print!("Complete all tasks? (y/n/i): ");
+            println!("This will finish {} task(s).", task_ids.len());
+            print!("Finish all tasks? (y/n/i): ");
             use std::io::{self, Write};
             io::stdout().flush()?;
             
@@ -1975,7 +2143,7 @@ fn handle_task_done(
                 }
                 "i" | "interactive" => {
                     // Interactive mode - confirm one by one
-                    return handle_done_interactive(&conn, &task_ids, end_ts, next);
+                    return handle_finish_interactive(&conn, &task_ids, end_ts, next);
                 }
                 _ => {
                     println!("Invalid input. Cancelled.");
@@ -1984,7 +2152,7 @@ fn handle_task_done(
             }
         } else if interactive {
             // Force interactive mode
-            return handle_done_interactive(&conn, &task_ids, end_ts, next);
+            return handle_finish_interactive(&conn, &task_ids, end_ts, next);
         }
     }
     
@@ -2010,7 +2178,7 @@ fn handle_task_done(
         
         // Mark task as completed
         TaskRepo::complete(&conn, *task_id)
-            .context("Failed to complete task")?;
+            .context("Failed to finish task")?;
         
         // Remove from stack
         let stack = StackRepo::get_or_create_default(&conn)?;
@@ -2023,7 +2191,7 @@ fn handle_task_done(
             StackRepo::drop(&conn, stack_id, item.ordinal as i32)?;
         }
         
-        println!("Completed task {}", task_id);
+        println!("Finished task {}", task_id);
     }
     
     // If --next flag and we completed stack[0], start session for new stack[0]
@@ -2045,7 +2213,7 @@ fn handle_task_done(
     Ok(())
 }
 
-fn handle_done_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, next: bool) -> Result<()> {
+fn handle_finish_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, next: bool) -> Result<()> {
     use std::io::{self, Write};
     
     let open_session = SessionRepo::get_open(conn)?;
@@ -2061,7 +2229,7 @@ fn handle_done_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, nex
         let task = task.unwrap();
         
         // Prompt for confirmation
-        print!("Complete task {} ({})? (y/n): ", task_id, task.description);
+        print!("Finish task {} ({})? (y/n): ", task_id, task.description);
         io::stdout().flush()?;
         
         let mut input = String::new();
@@ -2084,7 +2252,7 @@ fn handle_done_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, nex
         
         // Mark task as completed
         TaskRepo::complete(conn, *task_id)
-            .context("Failed to complete task")?;
+            .context("Failed to finish task")?;
         
         // Remove from stack
         let stack = StackRepo::get_or_create_default(conn)?;
@@ -2097,7 +2265,7 @@ fn handle_done_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, nex
             StackRepo::drop(conn, stack_id, item.ordinal as i32)?;
         }
         
-        println!("Completed task {}", task_id);
+        println!("Finished task {}", task_id);
     }
     
     // If --next flag and we completed stack[0], start session for new stack[0]
@@ -2111,6 +2279,161 @@ fn handle_done_interactive(conn: &Connection, task_ids: &[i64], end_ts: i64, nex
                 .context("Failed to start session for next task")?;
             println!("Started timing task {}", next_task_id);
         }
+    }
+    
+    Ok(())
+}
+
+fn handle_task_close(id_or_filter: String, yes: bool, interactive: bool) -> Result<()> {
+    let conn = DbConnection::connect()
+        .context("Failed to connect to database")?;
+    
+    // Resolve task IDs
+    let task_ids: Vec<i64> = match parse_task_id_spec(&id_or_filter) {
+        Ok(ids) => ids,
+        Err(_) => {
+            match validate_task_id(&id_or_filter) {
+                Ok(id) => {
+                    if TaskRepo::get_by_id(&conn, id)?.is_none() {
+                        user_error(&format!("Task {} not found", id));
+                    }
+                    vec![id]
+                }
+                Err(_) => {
+                    let filter_expr = match parse_filter(vec![id_or_filter]) {
+                        Ok(expr) => expr,
+                        Err(e) => user_error(&format!("Filter parse error: {}", e)),
+                    };
+                    let matching_tasks = filter_tasks(&conn, &filter_expr)
+                        .context("Failed to filter tasks")?;
+                    
+                    if matching_tasks.is_empty() {
+                        user_error("No matching tasks found");
+                    }
+                    
+                    matching_tasks.iter()
+                        .filter_map(|(task, _)| task.id)
+                        .collect()
+                }
+            }
+        }
+    };
+    
+    if task_ids.len() > 1 {
+        if !yes && !interactive {
+            println!("This will close {} task(s).", task_ids.len());
+            print!("Close all tasks? (y/n/i): ");
+            use std::io::{self, Write};
+            io::stdout().flush()?;
+            
+            let mut input = String::new();
+            io::stdin().read_line(&mut input)?;
+            let input = input.trim().to_lowercase();
+            
+            match input.as_str() {
+                "y" | "yes" => {}
+                "n" | "no" => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+                "i" | "interactive" => {
+                    return handle_close_interactive(&conn, &task_ids);
+                }
+                _ => {
+                    println!("Invalid input. Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else if interactive {
+            return handle_close_interactive(&conn, &task_ids);
+        }
+    }
+    
+    let end_ts = chrono::Utc::now().timestamp();
+    let open_session = SessionRepo::get_open(&conn)?;
+    let mut closed_open_session = false;
+    
+    for task_id in &task_ids {
+        if TaskRepo::get_by_id(&conn, *task_id)?.is_none() {
+            eprintln!("Error: Task {} not found", task_id);
+            continue;
+        }
+        
+        if let Some(session) = &open_session {
+            if !closed_open_session && session.task_id == *task_id {
+                SessionRepo::close_open(&conn, end_ts)
+                    .context("Failed to close session")?;
+                closed_open_session = true;
+            }
+        }
+        
+        TaskRepo::close(&conn, *task_id)
+            .context("Failed to close task")?;
+        
+        let stack = StackRepo::get_or_create_default(&conn)?;
+        let stack_id = stack.id.unwrap();
+        let items = StackRepo::get_items(&conn, stack_id)?;
+        if let Some(item) = items.iter().find(|item| item.task_id == *task_id) {
+            StackRepo::drop(&conn, stack_id, item.ordinal as i32)?;
+        }
+        
+        println!("Closed task {}", task_id);
+    }
+    
+    Ok(())
+}
+
+fn handle_close_interactive(conn: &Connection, task_ids: &[i64]) -> Result<()> {
+    use std::io::{self, Write};
+    
+    let end_ts = chrono::Utc::now().timestamp();
+    let open_session = SessionRepo::get_open(conn)?;
+    let mut closed_open_session = false;
+    
+    for task_id in task_ids {
+        let task = match TaskRepo::get_by_id(conn, *task_id) {
+            Ok(Some(task)) => task,
+            Ok(None) => {
+                eprintln!("Error: Task {} not found", task_id);
+                continue;
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to get task {}: {}", task_id, e);
+                continue;
+            }
+        };
+        
+        print!("Close task {} ({})? (y/n): ", task_id, task.description);
+        io::stdout().flush()?;
+        
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        
+        if input != "y" && input != "yes" {
+            println!("Skipped task {}.", task_id);
+            continue;
+        }
+        
+        if let Some(session) = &open_session {
+            if !closed_open_session && session.task_id == *task_id {
+                SessionRepo::close_open(conn, end_ts)
+                    .context("Failed to close session")?;
+                closed_open_session = true;
+            }
+        }
+        
+        TaskRepo::close(conn, *task_id)
+            .context("Failed to close task")?;
+        
+        let stack = StackRepo::get_or_create_default(conn)?;
+        let stack_id = stack.id.unwrap();
+        let items = StackRepo::get_items(conn, stack_id)?;
+        if let Some(item) = items.iter().find(|item| item.task_id == *task_id) {
+            StackRepo::drop(conn, stack_id, item.ordinal as i32)?;
+        }
+        
+        println!("Closed task {}", task_id);
     }
     
     Ok(())
@@ -2393,12 +2716,21 @@ fn handle_status(json: bool) -> Result<()> {
     let stack_task_ids: Vec<i64> = stack_items.iter().map(|item| item.task_id).collect();
     let priority_tasks = get_top_priority_tasks(&conn, &stack_task_ids, 3)?;
     
+    // Resolve clock task description (for status JSON)
+    let clock_task_description = if let Some((task_id, _)) = clock_state {
+        TaskRepo::get_by_id(&conn, task_id)?
+            .map(|task| task.description)
+    } else {
+        None
+    };
+    
     // Format and display dashboard
     if json {
         let dashboard_json = serde_json::json!({
             "clock": {
                 "state": if clock_state.is_some() { "in" } else { "out" },
                 "task_id": clock_state.map(|(id, _)| id),
+                "task_description": clock_task_description,
                 "duration_secs": clock_state.map(|(_, d)| d),
             },
             "clock_stack": clock_stack_tasks.iter().map(|(idx, task, tags)| {

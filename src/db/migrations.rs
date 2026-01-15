@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 use std::collections::HashMap;
 
 /// Current database schema version
-const CURRENT_VERSION: u32 = 1;
+const CURRENT_VERSION: u32 = 3;
 
 /// Migration system for managing database schema versions
 pub struct MigrationManager;
@@ -71,6 +71,8 @@ impl MigrationManager {
 fn get_migrations() -> HashMap<u32, fn(&rusqlite::Transaction) -> Result<(), rusqlite::Error>> {
     let mut migrations: HashMap<u32, fn(&rusqlite::Transaction) -> Result<(), rusqlite::Error>> = HashMap::new();
     migrations.insert(1, migration_v1);
+    migrations.insert(2, migration_v2);
+    migrations.insert(3, migration_v3);
     migrations
 }
 
@@ -275,6 +277,88 @@ fn migration_v1(tx: &rusqlite::Transaction) -> Result<(), rusqlite::Error> {
         [],
     )?;
 
+    Ok(())
+}
+
+/// Migration v2: Add 'closed' task status
+fn migration_v2(tx: &rusqlite::Transaction) -> Result<(), rusqlite::Error> {
+    // Disable foreign keys temporarily for table rebuild
+    tx.execute("PRAGMA foreign_keys=OFF", [])?;
+    
+    // Recreate tasks table with updated status constraint
+    tx.execute(
+        "CREATE TABLE tasks_new (
+            id INTEGER PRIMARY KEY,
+            uuid TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL,
+            status TEXT NOT NULL CHECK(status IN ('pending','completed','closed','deleted')),
+            project_id INTEGER NULL REFERENCES projects(id),
+            due_ts INTEGER NULL,
+            scheduled_ts INTEGER NULL,
+            wait_ts INTEGER NULL,
+            alloc_secs INTEGER NULL,
+            template TEXT NULL,
+            recur TEXT NULL,
+            udas_json TEXT NULL,
+            created_ts INTEGER NOT NULL,
+            modified_ts INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    
+    tx.execute(
+        "INSERT INTO tasks_new (id, uuid, description, status, project_id, due_ts, scheduled_ts, 
+                wait_ts, alloc_secs, template, recur, udas_json, created_ts, modified_ts)
+         SELECT id, uuid, description, status, project_id, due_ts, scheduled_ts,
+                wait_ts, alloc_secs, template, recur, udas_json, created_ts, modified_ts
+         FROM tasks",
+        [],
+    )?;
+    
+    tx.execute("DROP TABLE tasks", [])?;
+    tx.execute("ALTER TABLE tasks_new RENAME TO tasks", [])?;
+    
+    // Recreate indexes
+    tx.execute(
+        "CREATE INDEX idx_tasks_project_id ON tasks(project_id)",
+        [],
+    )?;
+    tx.execute(
+        "CREATE INDEX idx_tasks_status ON tasks(status)",
+        [],
+    )?;
+    tx.execute(
+        "CREATE INDEX idx_tasks_due_ts ON tasks(due_ts)",
+        [],
+    )?;
+    tx.execute(
+        "CREATE INDEX idx_tasks_scheduled_ts ON tasks(scheduled_ts)",
+        [],
+    )?;
+    tx.execute(
+        "CREATE INDEX idx_tasks_wait_ts ON tasks(wait_ts)",
+        [],
+    )?;
+    
+    // Re-enable foreign keys
+    tx.execute("PRAGMA foreign_keys=ON", [])?;
+    Ok(())
+}
+
+/// Migration v3: Add list views table
+fn migration_v3(tx: &rusqlite::Transaction) -> Result<(), rusqlite::Error> {
+    tx.execute(
+        "CREATE TABLE list_views (
+            name TEXT PRIMARY KEY,
+            entity TEXT NOT NULL,
+            filter_json TEXT NOT NULL,
+            sort_json TEXT NOT NULL,
+            group_json TEXT NOT NULL,
+            created_ts INTEGER NOT NULL,
+            modified_ts INTEGER NOT NULL
+        )",
+        [],
+    )?;
     Ok(())
 }
 

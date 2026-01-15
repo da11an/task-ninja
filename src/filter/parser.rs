@@ -74,10 +74,10 @@ pub fn parse_filter(tokens: Vec<String>) -> Result<FilterExpr, String> {
         }
         
         // Parse as filter term
-        if let Some(term) = parse_filter_term(token) {
-            parsed.push(FilterToken::Term(term));
-        } else {
-            return Err(format!("Invalid filter token: {}", token));
+        match parse_filter_term(token) {
+            Ok(Some(term)) => parsed.push(FilterToken::Term(term)),
+            Ok(None) => return Err(format!("Invalid filter token: {}", token)),
+            Err(err) => return Err(err),
         }
         
         i += 1;
@@ -109,65 +109,74 @@ pub enum FilterTerm {
 }
 
 /// Parse a single filter term token
-fn parse_filter_term(token: &str) -> Option<FilterTerm> {
+fn parse_filter_term(token: &str) -> Result<Option<FilterTerm>, String> {
     // Bare numeric ID
     if let Ok(id) = token.parse::<i64>() {
-        return Some(FilterTerm::Id(id));
+        return Ok(Some(FilterTerm::Id(id)));
     }
     
     // id:<n>
     if let Some(id_str) = token.strip_prefix("id:") {
         if let Ok(id) = id_str.parse::<i64>() {
-            return Some(FilterTerm::Id(id));
+            return Ok(Some(FilterTerm::Id(id)));
         }
     }
     
-    // status:<status>
-    if let Some(status) = token.strip_prefix("status:") {
-        return Some(FilterTerm::Status(status.to_string()));
-    }
-    
-    // project:<name>
-    if let Some(project) = token.strip_prefix("project:") {
-        return Some(FilterTerm::Project(project.to_string()));
+    // Key:value with token abbreviation support
+    if let Some((key, value)) = token.split_once(':') {
+        let resolved_key = resolve_filter_key(key)?;
+        return match resolved_key.as_str() {
+            "status" => Ok(Some(FilterTerm::Status(value.to_string()))),
+            "project" => Ok(Some(FilterTerm::Project(value.to_string()))),
+            "due" => Ok(Some(FilterTerm::Due(value.to_string()))),
+            "scheduled" => Ok(Some(FilterTerm::Scheduled(value.to_string()))),
+            "wait" => Ok(Some(FilterTerm::Wait(value.to_string()))),
+            "kanban" => Ok(Some(FilterTerm::Kanban(value.to_lowercase()))),
+            "id" => {
+                if let Ok(id) = value.parse::<i64>() {
+                    Ok(Some(FilterTerm::Id(id)))
+                } else {
+                    Ok(None)
+                }
+            }
+            _ => Ok(None),
+        };
     }
     
     // +tag or -tag
-    if token.starts_with('+') {
-        let tag = token.strip_prefix('+')?.to_string();
-        return Some(FilterTerm::Tag(tag, true));
+    if let Some(tag) = token.strip_prefix('+') {
+        return Ok(Some(FilterTerm::Tag(tag.to_string(), true)));
     }
-    if token.starts_with('-') {
-        let tag = token.strip_prefix('-')?.to_string();
-        return Some(FilterTerm::Tag(tag, false));
-    }
-    
-    // due:<expr>
-    if let Some(expr) = token.strip_prefix("due:") {
-        return Some(FilterTerm::Due(expr.to_string()));
-    }
-    
-    // scheduled:<expr>
-    if let Some(expr) = token.strip_prefix("scheduled:") {
-        return Some(FilterTerm::Scheduled(expr.to_string()));
-    }
-    
-    // wait:<expr>
-    if let Some(expr) = token.strip_prefix("wait:") {
-        return Some(FilterTerm::Wait(expr.to_string()));
+    if let Some(tag) = token.strip_prefix('-') {
+        return Ok(Some(FilterTerm::Tag(tag.to_string(), false)));
     }
     
     // waiting (derived filter)
     if token == "waiting" {
-        return Some(FilterTerm::Waiting);
+        return Ok(Some(FilterTerm::Waiting));
     }
     
-    // kanban:<status> (derived filter)
-    if let Some(status) = token.strip_prefix("kanban:") {
-        return Some(FilterTerm::Kanban(status.to_lowercase()));
-    }
+    Ok(None)
+}
+
+fn resolve_filter_key(key: &str) -> Result<String, String> {
+    let key_lower = key.to_lowercase();
+    let known = ["id", "status", "project", "due", "scheduled", "wait", "kanban"];
+    let matches: Vec<&str> = known.iter().copied()
+        .filter(|candidate| candidate.starts_with(&key_lower))
+        .collect();
     
-    None
+    if matches.len() == 1 {
+        Ok(matches[0].to_string())
+    } else if matches.is_empty() {
+        Ok(key_lower)
+    } else {
+        Err(format!(
+            "Ambiguous filter token '{}'. Did you mean one of: {}?",
+            key,
+            matches.join(", ")
+        ))
+    }
 }
 
 /// Build expression tree from parsed tokens
@@ -323,5 +332,24 @@ mod tests {
             FilterExpr::Or(_) => {}
             _ => panic!("Expected Or expression"),
         }
+    }
+
+    #[test]
+    fn test_filter_token_abbreviation() {
+        let expr = parse_filter(vec!["st:pending".to_string()]).unwrap();
+        match expr {
+            FilterExpr::Term(FilterTerm::Status(status)) => {
+                assert_eq!(status, "pending");
+            }
+            _ => panic!("Expected Status term"),
+        }
+    }
+
+    #[test]
+    fn test_filter_token_ambiguous_prefix() {
+        let result = parse_filter(vec!["s:pending".to_string()]);
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Ambiguous filter token"));
     }
 }

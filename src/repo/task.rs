@@ -469,30 +469,38 @@ impl TaskRepo {
         Ok(tasks)
     }
 
-    /// Mark a task as completed
-    pub fn complete(conn: &Connection, task_id: i64) -> Result<()> {
-        // Get current status for event recording
+    /// Update task status
+    pub fn set_status(conn: &Connection, task_id: i64, new_status: crate::models::TaskStatus) -> Result<()> {
         let old_task = Self::get_by_id(conn, task_id)?
             .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
         let old_status = old_task.status.as_str();
+        let new_status_str = new_status.as_str();
         
         let now = chrono::Utc::now().timestamp();
-        
         let rows_affected = conn.execute(
-            "UPDATE tasks SET status = 'completed', modified_ts = ?1 WHERE id = ?2",
-            rusqlite::params![now, task_id],
+            "UPDATE tasks SET status = ?1, modified_ts = ?2 WHERE id = ?3",
+            rusqlite::params![new_status_str, now, task_id],
         )?;
         
         if rows_affected == 0 {
             anyhow::bail!("Task {} not found", task_id);
         }
         
-        // Record status_changed event
-        if old_status != "completed" {
-            EventRepo::record_status_changed(conn, task_id, old_status, "completed")?;
+        if old_status != new_status_str {
+            EventRepo::record_status_changed(conn, task_id, old_status, new_status_str)?;
         }
         
         Ok(())
+    }
+    
+    /// Mark a task as completed
+    pub fn complete(conn: &Connection, task_id: i64) -> Result<()> {
+        Self::set_status(conn, task_id, crate::models::TaskStatus::Completed)
+    }
+    
+    /// Mark a task as closed
+    pub fn close(conn: &Connection, task_id: i64) -> Result<()> {
+        Self::set_status(conn, task_id, crate::models::TaskStatus::Closed)
     }
 
     /// Permanently delete a task and all related data

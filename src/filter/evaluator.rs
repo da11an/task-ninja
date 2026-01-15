@@ -11,7 +11,7 @@
 //! # Filter Terms
 //!
 //! - `id` - Match by task ID
-//! - `status:<status>` - Match by status (pending, completed, deleted)
+//! - `status:<status>` - Match by status (pending, completed, closed, deleted)
 //! - `project:<name>` - Match by project (supports prefix matching for nested projects)
 //! - `+tag` / `-tag` - Match by tag presence/absence
 //! - `due:<expr>` - Match by due date
@@ -201,8 +201,8 @@ impl FilterTerm {
 /// Calculate the kanban status for a task
 /// This is a helper function for filter evaluation
 fn calculate_task_kanban(task: &Task, conn: &Connection) -> Result<String> {
-    // Completed tasks are "done"
-    if task.status == TaskStatus::Completed {
+    // Completed/closed tasks are "done"
+    if task.status == TaskStatus::Completed || task.status == TaskStatus::Closed {
         return Ok("done".to_string());
     }
     
@@ -212,20 +212,30 @@ fn calculate_task_kanban(task: &Task, conn: &Connection) -> Result<String> {
     let stack = StackRepo::get_or_create_default(conn)?;
     let items = StackRepo::get_items(conn, stack.id.unwrap())?;
     let stack_position = items.iter().position(|item| item.task_id == task_id);
+    let stack_top_task_id = items.first().map(|item| item.task_id);
     
     // Check if task has sessions
     let all_sessions = SessionRepo::list_all(conn)?;
     let has_sessions = all_sessions.iter().any(|s| s.task_id == task_id);
     
     // Check if clock is running
-    let is_clock_running = SessionRepo::get_open(conn)?.is_some();
+    let open_session_task_id = SessionRepo::get_open(conn)?.map(|s| s.task_id);
     
     match stack_position {
         Some(0) => {
-            if is_clock_running {
+            if open_session_task_id == task.id {
                 Ok("live".to_string())
             } else {
                 Ok("next".to_string())
+            }
+        }
+        Some(1) => {
+            if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
+                Ok("next".to_string())
+            } else if has_sessions {
+                Ok("working".to_string())
+            } else {
+                Ok("queued".to_string())
             }
         }
         Some(_pos) => {

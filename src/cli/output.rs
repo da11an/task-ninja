@@ -7,6 +7,7 @@ use chrono::Local;
 use rusqlite::Connection;
 use anyhow::Result;
 use std::collections::{HashMap, HashSet};
+use std::cmp::Ordering;
 
 /// Kanban status values (derived from task state)
 /// 
@@ -23,25 +24,36 @@ pub fn calculate_kanban_status(
     task: &Task,
     stack_position: Option<usize>,
     has_sessions: bool,
-    is_live: bool,
+    open_session_task_id: Option<i64>,
+    stack_top_task_id: Option<i64>,
 ) -> &'static str {
-    // Completed tasks are "done"
-    if task.status == TaskStatus::Completed {
+    // Completed/closed tasks are "done"
+    if task.status == TaskStatus::Completed || task.status == TaskStatus::Closed {
         return "done";
     }
     
-    // At this point, task is pending
+    // At this point, task is pending (or other non-terminal status)
     match stack_position {
         Some(0) => {
             // Position 0 = top of stack
-            if is_live {
+            if open_session_task_id == task.id {
                 "LIVE"
             } else {
                 "NEXT"
             }
         }
+        Some(1) => {
+            // Position 1 = NEXT if position 0 is LIVE
+            if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
+                "NEXT"
+            } else if has_sessions {
+                "working"
+            } else {
+                "queued"
+            }
+        }
         Some(_pos) => {
-            // Position > 0 = in stack but not at top
+            // Position > 1 = in stack but not at top
             if has_sessions {
                 "working"
             } else {
@@ -77,11 +89,6 @@ fn get_tasks_with_sessions(conn: &Connection) -> Result<HashSet<i64>> {
     let all_sessions = SessionRepo::list_all(conn)?;
     let task_ids: HashSet<i64> = all_sessions.iter().map(|s| s.task_id).collect();
     Ok(task_ids)
-}
-
-/// Check if clock is currently running (has open session)
-fn is_clock_running(conn: &Connection) -> Result<bool> {
-    Ok(SessionRepo::get_open(conn)?.is_some())
 }
 
 /// Format timestamp for display
@@ -156,11 +163,102 @@ pub fn format_duration(secs: i64) -> String {
     }
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct TaskListOptions {
+    pub use_relative_time: bool,
+    pub sort_columns: Vec<String>,
+    pub group_columns: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum TaskListColumn {
+    Id,
+    Description,
+    Kanban,
+    Project,
+    Tags,
+    Due,
+    Alloc,
+    Priority,
+    Clock,
+    Status,
+}
+
+#[derive(Debug, Clone)]
+enum SortValue {
+    Int(i64),
+    Float(f64),
+    Str(String),
+}
+
+#[derive(Debug, Clone)]
+struct TaskRow {
+    task: Task,
+    tags: Vec<String>,
+    values: HashMap<TaskListColumn, String>,
+    sort_values: HashMap<TaskListColumn, Option<SortValue>>,
+}
+
+fn parse_task_column(name: &str) -> Option<TaskListColumn> {
+    match name.to_lowercase().as_str() {
+        "id" => Some(TaskListColumn::Id),
+        "description" | "desc" => Some(TaskListColumn::Description),
+        "kanban" => Some(TaskListColumn::Kanban),
+        "project" | "proj" => Some(TaskListColumn::Project),
+        "tags" | "tag" => Some(TaskListColumn::Tags),
+        "due" => Some(TaskListColumn::Due),
+        "alloc" | "allocation" => Some(TaskListColumn::Alloc),
+        "priority" | "prio" | "pri" => Some(TaskListColumn::Priority),
+        "clock" => Some(TaskListColumn::Clock),
+        "status" => Some(TaskListColumn::Status),
+        _ => None,
+    }
+}
+
+fn column_label(column: TaskListColumn) -> &'static str {
+    match column {
+        TaskListColumn::Id => "ID",
+        TaskListColumn::Description => "Description",
+        TaskListColumn::Kanban => "Kanban",
+        TaskListColumn::Project => "Project",
+        TaskListColumn::Tags => "Tags",
+        TaskListColumn::Due => "Due",
+        TaskListColumn::Alloc => "Alloc",
+        TaskListColumn::Priority => "Priority",
+        TaskListColumn::Clock => "Clock",
+        TaskListColumn::Status => "Status",
+    }
+}
+
+fn compare_sort_values(a: &Option<SortValue>, b: &Option<SortValue>) -> Ordering {
+    match (a, b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(a), Some(b)) => match (a, b) {
+            (SortValue::Int(a), SortValue::Int(b)) => a.cmp(b),
+            (SortValue::Float(a), SortValue::Float(b)) => a
+                .partial_cmp(b)
+                .unwrap_or(Ordering::Equal),
+            (SortValue::Str(a), SortValue::Str(b)) => a.cmp(b),
+            _ => sort_value_as_string(a).cmp(&sort_value_as_string(b)),
+        },
+    }
+}
+
+fn sort_value_as_string(value: &SortValue) -> String {
+    match value {
+        SortValue::Int(v) => v.to_string(),
+        SortValue::Float(v) => format!("{:.6}", v),
+        SortValue::Str(v) => v.clone(),
+    }
+}
+
 /// Format task list as a table
 pub fn format_task_list_table(
     conn: &Connection,
     tasks: &[(Task, Vec<String>)],
-    use_relative_time: bool,
+    options: &TaskListOptions,
 ) -> Result<String> {
     if tasks.is_empty() {
         return Ok("No tasks found.".to_string());
@@ -168,110 +266,28 @@ pub fn format_task_list_table(
     
     // Pre-compute kanban-related data for all tasks (batch queries for performance)
     let stack_positions = get_stack_positions(conn)?;
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_items = StackRepo::get_items(conn, stack.id.unwrap())?;
+    let stack_top_task_id = stack_items.first().map(|item| item.task_id);
     let tasks_with_sessions = get_tasks_with_sessions(conn)?;
-    let clock_running = is_clock_running(conn)?;
+    let open_session_task_id = SessionRepo::get_open(conn)?.map(|s| s.task_id);
     
-    // Calculate column widths
-    let mut id_width = 4;
-    let mut desc_width = 20;
-    let mut kanban_width = 8; // "proposed" is longest (8 chars)
-    let mut project_width = 15;
-    let mut tags_width = 20;
-    let mut due_width = 12;
-    let mut alloc_width = 5; // "alloc" header (changed from "Allocation")
-    let mut clock_width = 5; // "Clock" header
-    let mut priority_width = 7; // "Priority" header
-    
-    // First pass: calculate widths
+    let mut rows: Vec<TaskRow> = Vec::new();
     for (task, tags) in tasks {
-        id_width = id_width.max(task.id.map(|id| id.to_string().len()).unwrap_or(0));
-        desc_width = desc_width.max(task.description.len().min(50));
-        
-        if let Some(project_id) = task.project_id {
-            if let Ok(Some(project)) = ProjectRepo::get_by_id(conn, project_id) {
-                project_width = project_width.max(project.name.len().min(15));
-            }
-        }
-        
-        if !tags.is_empty() {
-            let tag_str = tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" ");
-            tags_width = tags_width.max(tag_str.len().min(30));
-        }
-        
-        if task.due_ts.is_some() {
-            due_width = due_width.max(12);
-        }
-        
-        if let Some(alloc_secs) = task.alloc_secs {
-            let alloc_str = format_duration(alloc_secs);
-            alloc_width = alloc_width.max(alloc_str.len());
-        }
-        
-        // Calculate clock width (total logged time)
-        if let Some(task_id) = task.id {
-            if let Ok(total_logged) = TaskRepo::get_total_logged_time(conn, task_id) {
-                let clock_str = if total_logged > 0 {
-                    format_duration(total_logged)
-                } else {
-                    "0s".to_string()
-                };
-                clock_width = clock_width.max(clock_str.len());
-            }
-        }
-        
-        // Calculate priority width
-        if task.status == TaskStatus::Pending {
-            if let Ok(priority) = calculate_priority(task, conn) {
-                let priority_str = format!("{:.1}", priority);
-                priority_width = priority_width.max(priority_str.len());
-            }
-        }
-    }
-    
-    // Build header
-    let mut output = String::new();
-    output.push_str(&format!(
-        "{:<id$} {:<desc$} {:<kanban$} {:<project$} {:<tags$} {:<due$} {:<alloc$} {:<priority$} {:<clock$}\n",
-        "ID", "Description", "Kanban", "Project", "Tags", "Due", "alloc", "Priority", "Clock",
-        id = id_width,
-        desc = desc_width,
-        kanban = kanban_width,
-        project = project_width,
-        tags = tags_width,
-        due = due_width,
-        alloc = alloc_width,
-        priority = priority_width,
-        clock = clock_width
-    ));
-    
-    // Separator line
-    let total_width = id_width + desc_width + kanban_width + project_width + tags_width + due_width + alloc_width + priority_width + clock_width + 8;
-    output.push_str(&format!("{}\n", "-".repeat(total_width)));
-    
-    // Build rows
-    for (task, tags) in tasks {
-        let id = task.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string());
-        
-        let desc = if task.description.len() > desc_width {
-            format!("{}..", &task.description[..desc_width.saturating_sub(2)])
-        } else {
-            task.description.clone()
-        };
-        
-        // Calculate kanban status
         let task_id = task.id.unwrap_or(0);
         let stack_pos = stack_positions.get(&task_id).copied();
         let has_sessions = tasks_with_sessions.contains(&task_id);
-        let is_live = stack_pos == Some(0) && clock_running;
-        let kanban = calculate_kanban_status(task, stack_pos, has_sessions, is_live);
+        let kanban = calculate_kanban_status(
+            task,
+            stack_pos,
+            has_sessions,
+            open_session_task_id,
+            stack_top_task_id,
+        );
         
         let project = if let Some(project_id) = task.project_id {
             if let Ok(Some(proj)) = ProjectRepo::get_by_id(conn, project_id) {
-                if proj.name.len() > project_width {
-                    format!("{}..", &proj.name[..project_width.saturating_sub(2)])
-                } else {
-                    proj.name
-                }
+                proj.name
             } else {
                 format!("[{}]", project_id)
             }
@@ -280,18 +296,13 @@ pub fn format_task_list_table(
         };
         
         let tag_str = if !tags.is_empty() {
-            let full = tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" ");
-            if full.len() > tags_width {
-                format!("{}..", &full[..tags_width.saturating_sub(2)])
-            } else {
-                full
-            }
+            tags.iter().map(|t| format!("+{}", t)).collect::<Vec<_>>().join(" ")
         } else {
             String::new()
         };
         
         let due = if let Some(due_ts) = task.due_ts {
-            if use_relative_time {
+            if options.use_relative_time {
                 format_relative_date(due_ts)
             } else {
                 format_date(due_ts)
@@ -320,7 +331,6 @@ pub fn format_task_list_table(
             "0s".to_string()
         };
         
-        // Calculate priority (only for pending tasks)
         let priority = if task.status == TaskStatus::Pending {
             if let Ok(prio) = calculate_priority(task, conn) {
                 format!("{:.1}", prio)
@@ -331,19 +341,181 @@ pub fn format_task_list_table(
             String::new()
         };
         
-        output.push_str(&format!(
-            "{:<id$} {:<desc$} {:<kanban$} {:<project$} {:<tags$} {:<due$} {:<alloc$} {:<priority$} {:<clock$}\n",
-            id, desc, kanban, project, tag_str, due, alloc, priority, clock,
-            id = id_width,
-            desc = desc_width,
-            kanban = kanban_width,
-            project = project_width,
-            tags = tags_width,
-            due = due_width,
-            alloc = alloc_width,
-            priority = priority_width,
-            clock = clock_width
-        ));
+        let mut values = HashMap::new();
+        values.insert(TaskListColumn::Id, task.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()));
+        values.insert(TaskListColumn::Description, task.description.clone());
+        values.insert(TaskListColumn::Kanban, kanban.to_string());
+        values.insert(TaskListColumn::Project, project.clone());
+        values.insert(TaskListColumn::Tags, tag_str.clone());
+        values.insert(TaskListColumn::Due, due.clone());
+        values.insert(TaskListColumn::Alloc, alloc.clone());
+        values.insert(TaskListColumn::Priority, priority.clone());
+        values.insert(TaskListColumn::Clock, clock.clone());
+        values.insert(TaskListColumn::Status, task.status.as_str().to_string());
+        
+        let mut sort_values = HashMap::new();
+        sort_values.insert(TaskListColumn::Id, task.id.map(SortValue::Int));
+        sort_values.insert(TaskListColumn::Description, Some(SortValue::Str(task.description.clone())));
+        sort_values.insert(TaskListColumn::Kanban, Some(SortValue::Str(kanban.to_string())));
+        sort_values.insert(TaskListColumn::Project, Some(SortValue::Str(project)));
+        sort_values.insert(TaskListColumn::Tags, Some(SortValue::Str(tag_str)));
+        sort_values.insert(TaskListColumn::Due, task.due_ts.map(SortValue::Int));
+        sort_values.insert(TaskListColumn::Alloc, task.alloc_secs.map(SortValue::Int));
+        sort_values.insert(TaskListColumn::Priority, if task.status == TaskStatus::Pending {
+            calculate_priority(task, conn).ok().map(SortValue::Float)
+        } else {
+            None
+        });
+        sort_values.insert(TaskListColumn::Clock, if let Some(task_id) = task.id {
+            TaskRepo::get_total_logged_time(conn, task_id).ok().map(SortValue::Int)
+        } else {
+            None
+        });
+        sort_values.insert(TaskListColumn::Status, Some(SortValue::Str(task.status.as_str().to_string())));
+        
+        rows.push(TaskRow {
+            task: task.clone(),
+            tags: tags.clone(),
+            values,
+            sort_values,
+        });
+    }
+    
+    // Build column order
+    let mut columns: Vec<TaskListColumn> = Vec::new();
+    for col in &options.sort_columns {
+        let column = parse_task_column(col)
+            .ok_or_else(|| anyhow::anyhow!("Unknown sort column: {}", col))?;
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    for column in [TaskListColumn::Id, TaskListColumn::Description] {
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    for col in &options.group_columns {
+        let column = parse_task_column(col)
+            .ok_or_else(|| anyhow::anyhow!("Unknown group column: {}", col))?;
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    
+    let default_columns = [
+        TaskListColumn::Kanban,
+        TaskListColumn::Project,
+        TaskListColumn::Tags,
+        TaskListColumn::Due,
+        TaskListColumn::Alloc,
+        TaskListColumn::Priority,
+        TaskListColumn::Clock,
+    ];
+    for column in default_columns {
+        if !columns.contains(&column) {
+            columns.push(column);
+        }
+    }
+    
+    // Calculate column widths
+    let mut column_widths: HashMap<TaskListColumn, usize> = HashMap::new();
+    for column in &columns {
+        column_widths.insert(*column, column_label(*column).len().max(4));
+    }
+    
+    for row in &rows {
+        for column in &columns {
+            if let Some(value) = row.values.get(column) {
+                let max_len = if *column == TaskListColumn::Description {
+                    value.len().min(50)
+                } else {
+                    value.len()
+                };
+                let entry = column_widths.entry(*column).or_insert(4);
+                *entry = (*entry).max(max_len);
+            }
+        }
+    }
+    
+    // Build header
+    let mut output = String::new();
+    for (idx, column) in columns.iter().enumerate() {
+        let width = *column_widths.get(column).unwrap_or(&4);
+        if idx == columns.len() - 1 {
+            output.push_str(&format!("{:<width$}\n", column_label(*column), width = width));
+        } else {
+            output.push_str(&format!("{:<width$} ", column_label(*column), width = width));
+        }
+    }
+    
+    // Separator line
+    let total_width: usize = columns.iter()
+        .map(|col| column_widths.get(col).copied().unwrap_or(4))
+        .sum::<usize>() + (columns.len().saturating_sub(1));
+    output.push_str(&format!("{}\n", "-".repeat(total_width)));
+    
+    // Apply sorting
+    if !options.sort_columns.is_empty() {
+        rows.sort_by(|a, b| {
+            for col_name in &options.sort_columns {
+                if let Some(column) = parse_task_column(col_name) {
+                    let ordering = compare_sort_values(
+                        a.sort_values.get(&column).unwrap_or(&None),
+                        b.sort_values.get(&column).unwrap_or(&None),
+                    );
+                    if ordering != Ordering::Equal {
+                        return ordering;
+                    }
+                }
+            }
+            Ordering::Equal
+        });
+    }
+    
+    // Build rows with optional grouping
+    let mut last_group: Option<Vec<String>> = None;
+    for row in &rows {
+        if !options.group_columns.is_empty() {
+            let group_values: Vec<String> = options.group_columns.iter()
+                .filter_map(|name| parse_task_column(name))
+                .map(|column| row.values.get(&column).cloned().unwrap_or_default())
+                .collect();
+            if last_group.as_ref() != Some(&group_values) {
+                output.push_str(&format!("{}\n", "-".repeat(total_width)));
+                for (idx, column) in columns.iter().enumerate() {
+                    let width = *column_widths.get(column).unwrap_or(&4);
+                    let value = if options.group_columns.iter().any(|name| parse_task_column(name) == Some(*column)) {
+                        row.values.get(column).cloned().unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if idx == columns.len() - 1 {
+                        output.push_str(&format!("{:<width$}\n", value, width = width));
+                    } else {
+                        output.push_str(&format!("{:<width$} ", value, width = width));
+                    }
+                }
+                last_group = Some(group_values);
+            }
+        }
+        
+        for (idx, column) in columns.iter().enumerate() {
+            let width = *column_widths.get(column).unwrap_or(&4);
+            let raw_value = row.values.get(column).cloned().unwrap_or_default();
+            let value = if *column == TaskListColumn::Description && raw_value.len() > width {
+                format!("{}..", &raw_value[..width.saturating_sub(2)])
+            } else if raw_value.len() > width {
+                format!("{}..", &raw_value[..width.saturating_sub(2)])
+            } else {
+                raw_value
+            };
+            if idx == columns.len() - 1 {
+                output.push_str(&format!("{:<width$}\n", value, width = width));
+            } else {
+                output.push_str(&format!("{:<width$} ", value, width = width));
+            }
+        }
     }
     
     Ok(output)
@@ -695,10 +867,29 @@ pub fn format_dashboard(
     // Clock Status Section
     output.push_str("=== Clock Status ===\n");
     if let Some((task_id, duration)) = clock_state {
-        if duration > 0 {
-            output.push_str(&format!("Clocked IN on task {} ({})\n", task_id, format_duration(duration)));
+        let task_desc = TaskRepo::get_by_id(conn, task_id)
+            .ok()
+            .flatten()
+            .map(|t| t.description)
+            .unwrap_or_else(|| "".to_string());
+        let desc_str = if task_desc.is_empty() {
+            "".to_string()
         } else {
-            output.push_str(&format!("Clocked OUT (task {} in stack)\n", task_id));
+            format!(": {}", task_desc)
+        };
+        if duration > 0 {
+            output.push_str(&format!(
+                "Clocked IN on task {}{} ({})\n",
+                task_id,
+                desc_str,
+                format_duration(duration)
+            ));
+        } else {
+            output.push_str(&format!(
+                "Clocked OUT (task {}{} in stack)\n",
+                task_id,
+                desc_str
+            ));
         }
     } else {
         output.push_str("Clocked OUT (no task in stack)\n");

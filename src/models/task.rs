@@ -6,6 +6,7 @@ use std::collections::HashMap;
 pub enum TaskStatus {
     Pending,
     Completed,
+    Closed,
     Deleted,
 }
 
@@ -14,6 +15,7 @@ impl TaskStatus {
         match self {
             TaskStatus::Pending => "pending",
             TaskStatus::Completed => "completed",
+            TaskStatus::Closed => "closed",
             TaskStatus::Deleted => "deleted",
         }
     }
@@ -22,6 +24,7 @@ impl TaskStatus {
         match s {
             "pending" => Some(TaskStatus::Pending),
             "completed" => Some(TaskStatus::Completed),
+            "closed" => Some(TaskStatus::Closed),
             "deleted" => Some(TaskStatus::Deleted),
             _ => None,
         }
@@ -88,6 +91,8 @@ mod tests {
     fn test_task_status_conversion() {
         assert_eq!(TaskStatus::Pending.as_str(), "pending");
         assert_eq!(TaskStatus::from_str("pending"), Some(TaskStatus::Pending));
+        assert_eq!(TaskStatus::Closed.as_str(), "closed");
+        assert_eq!(TaskStatus::from_str("closed"), Some(TaskStatus::Closed));
         assert_eq!(TaskStatus::from_str("invalid"), None);
     }
 

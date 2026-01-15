@@ -88,3 +88,12 @@ task list sort:-kanban,-id hide:clock group:status
 ## Not Implemented
 - View storage for hide_columns (would require database migration)
 - Sessions list sorting updates (left for future work)
+
+## Additional Update: Grouping Negation Support
+
+Added support for negation prefix in grouping, matching the sorting behavior:
+
+- `group:kanban` → Groups ordered by kanban ordinal (proposed → done)
+- `group:-kanban` → Groups ordered in reverse (done → proposed)
+
+The change uses the same ordinal sort values for group ordering, ensuring consistent behavior between sorting and grouping.

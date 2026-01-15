@@ -1371,7 +1371,7 @@ pub fn handle_sessions_report(start: Option<String>, end: Option<String>) -> Res
         .map(|dt| dt.format("%Y-%m-%d").to_string())
         .unwrap_or_default();
     
-    let period_days = ((period_end - period_start) / 86400).max(1);
+    let period_days = ((period_end - period_start) / 86400).max(1) + 1;
     
     // Print report
     let width = 80;

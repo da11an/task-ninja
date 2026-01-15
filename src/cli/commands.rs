@@ -833,6 +833,7 @@ struct ListRequest {
     filter_tokens: Vec<String>,
     sort_columns: Vec<String>,
     group_columns: Vec<String>,
+    hide_columns: Vec<String>,
     save_alias: Option<String>,
 }
 
@@ -840,6 +841,7 @@ fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListReq
     let mut filter_tokens = Vec::new();
     let mut sort_columns = Vec::new();
     let mut group_columns = Vec::new();
+    let mut hide_columns = Vec::new();
     let mut save_alias = add_alias;
     
     for token in tokens {
@@ -847,6 +849,8 @@ fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListReq
             sort_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
         } else if let Some(spec) = token.strip_prefix("group:") {
             group_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
+        } else if let Some(spec) = token.strip_prefix("hide:") {
+            hide_columns.extend(spec.split(',').filter(|s| !s.is_empty()).map(|s| s.to_string()));
         } else if let Some(name) = token.strip_prefix("alias:") {
             if save_alias.is_none() && !name.is_empty() {
                 save_alias = Some(name.to_string());
@@ -860,6 +864,7 @@ fn parse_list_request(tokens: Vec<String>, add_alias: Option<String>) -> ListReq
         filter_tokens,
         sort_columns,
         group_columns,
+        hide_columns,
         save_alias,
     }
 }
@@ -962,6 +967,7 @@ fn handle_task_list(filter_args: Vec<String>, json: bool, relative: bool, add_al
             use_relative_time: relative,
             sort_columns: request.sort_columns,
             group_columns: request.group_columns,
+            hide_columns: request.hide_columns,
         };
         let table = format_task_list_table(&conn, &tasks, &options)?;
         print!("{}", table);

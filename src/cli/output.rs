@@ -168,6 +168,46 @@ pub struct TaskListOptions {
     pub use_relative_time: bool,
     pub sort_columns: Vec<String>,
     pub group_columns: Vec<String>,
+    pub hide_columns: Vec<String>,
+}
+
+/// Parse a sort specification, detecting negation prefix for descending order
+struct SortSpec {
+    column: String,
+    descending: bool,
+}
+
+fn parse_sort_spec(spec: &str) -> SortSpec {
+    if let Some(col) = spec.strip_prefix('-') {
+        SortSpec { column: col.to_string(), descending: true }
+    } else {
+        SortSpec { column: spec.to_string(), descending: false }
+    }
+}
+
+/// Ordinal value for kanban status (workflow progression)
+fn kanban_sort_order(kanban: &str) -> i64 {
+    match kanban.to_lowercase().as_str() {
+        "proposed" => 0,
+        "queued" => 1,
+        "paused" => 2,
+        "working" => 3,
+        "next" => 4,
+        "live" => 5,
+        "done" => 6,
+        "quit" => 7,
+        _ => 99,
+    }
+}
+
+/// Ordinal value for task status (lifecycle progression)
+fn status_sort_order(status: &str) -> i64 {
+    match status.to_lowercase().as_str() {
+        "pending" => 0,
+        "completed" => 1,
+        "closed" => 2,
+        _ => 99,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -356,7 +396,7 @@ pub fn format_task_list_table(
         let mut sort_values = HashMap::new();
         sort_values.insert(TaskListColumn::Id, task.id.map(SortValue::Int));
         sort_values.insert(TaskListColumn::Description, Some(SortValue::Str(task.description.clone())));
-        sort_values.insert(TaskListColumn::Kanban, Some(SortValue::Str(kanban.to_string())));
+        sort_values.insert(TaskListColumn::Kanban, Some(SortValue::Int(kanban_sort_order(&kanban))));
         sort_values.insert(TaskListColumn::Project, Some(SortValue::Str(project)));
         sort_values.insert(TaskListColumn::Tags, Some(SortValue::Str(tag_str)));
         sort_values.insert(TaskListColumn::Due, task.due_ts.map(SortValue::Int));
@@ -371,7 +411,7 @@ pub fn format_task_list_table(
         } else {
             None
         });
-        sort_values.insert(TaskListColumn::Status, Some(SortValue::Str(task.status.as_str().to_string())));
+        sort_values.insert(TaskListColumn::Status, Some(SortValue::Int(status_sort_order(task.status.as_str()))));
         
         rows.push(TaskRow {
             task: task.clone(),
@@ -384,7 +424,8 @@ pub fn format_task_list_table(
     // Build column order
     let mut columns: Vec<TaskListColumn> = Vec::new();
     for col in &options.sort_columns {
-        let column = parse_task_column(col)
+        let col_name = col.strip_prefix('-').unwrap_or(col);
+        let column = parse_task_column(col_name)
             .ok_or_else(|| anyhow::anyhow!("Unknown sort column: {}", col))?;
         if !columns.contains(&column) {
             columns.push(column);
@@ -396,7 +437,8 @@ pub fn format_task_list_table(
         }
     }
     for col in &options.group_columns {
-        let column = parse_task_column(col)
+        let col_name = col.strip_prefix('-').unwrap_or(col);
+        let column = parse_task_column(col_name)
             .ok_or_else(|| anyhow::anyhow!("Unknown group column: {}", col))?;
         if !columns.contains(&column) {
             columns.push(column);
@@ -404,6 +446,7 @@ pub fn format_task_list_table(
     }
     
     let default_columns = [
+        TaskListColumn::Status,
         TaskListColumn::Kanban,
         TaskListColumn::Project,
         TaskListColumn::Tags,
@@ -417,6 +460,12 @@ pub fn format_task_list_table(
             columns.push(column);
         }
     }
+    
+    // Remove hidden columns
+    let hidden_columns: Vec<TaskListColumn> = options.hide_columns.iter()
+        .filter_map(|name| parse_task_column(name))
+        .collect();
+    columns.retain(|col| !hidden_columns.contains(col));
     
     // Calculate column widths
     let mut column_widths: HashMap<TaskListColumn, usize> = HashMap::new();
@@ -456,15 +505,19 @@ pub fn format_task_list_table(
     output.push_str(&format!("{}\n", "-".repeat(total_width)));
     
     // Apply sorting (ensure grouped rows are contiguous by sorting on group columns first)
-    let mut effective_sort_columns = options.group_columns.clone();
+    // Parse sort specs with negation support
+    let mut effective_sort_specs: Vec<SortSpec> = options.group_columns.iter()
+        .map(|col| parse_sort_spec(col))
+        .collect();
     for sort_col in &options.sort_columns {
-        if !effective_sort_columns.iter().any(|c| c.eq_ignore_ascii_case(sort_col)) {
-            effective_sort_columns.push(sort_col.clone());
+        let spec = parse_sort_spec(sort_col);
+        if !effective_sort_specs.iter().any(|s| s.column.eq_ignore_ascii_case(&spec.column)) {
+            effective_sort_specs.push(spec);
         }
     }
-    if !effective_sort_columns.is_empty() {
+    if !effective_sort_specs.is_empty() {
         let group_columns_parsed: Vec<TaskListColumn> = options.group_columns.iter()
-            .filter_map(|name| parse_task_column(name))
+            .filter_map(|name| parse_task_column(&parse_sort_spec(name).column))
             .collect();
         rows.sort_by(|a, b| {
             if !group_columns_parsed.is_empty() {
@@ -478,14 +531,14 @@ pub fn format_task_list_table(
                     return a_key.cmp(&b_key);
                 }
             }
-            for col_name in &effective_sort_columns {
-                if let Some(column) = parse_task_column(col_name) {
+            for spec in &effective_sort_specs {
+                if let Some(column) = parse_task_column(&spec.column) {
                     let ordering = compare_sort_values(
                         a.sort_values.get(&column).unwrap_or(&None),
                         b.sort_values.get(&column).unwrap_or(&None),
                     );
                     if ordering != Ordering::Equal {
-                        return ordering;
+                        return if spec.descending { ordering.reverse() } else { ordering };
                     }
                 }
             }
@@ -543,10 +596,10 @@ pub fn format_task_list_table(
                 .collect::<Vec<_>>()
                 .join(":");
             
-            // Embed group label at the start of the divider line in square brackets
-            let bracket_label = format!("[{}]", group_label);
-            let dash_count = total_width.saturating_sub(bracket_label.len());
-            output.push_str(&format!("{}{}\n", bracket_label, "-".repeat(dash_count)));
+            // Group header in square brackets (no divider line)
+
+            
+            output.push_str(&format!("[{}]\n", group_label));
             
             for row in group_rows {
                 for (idx, column) in columns.iter().enumerate() {

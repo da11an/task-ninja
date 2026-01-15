@@ -18,7 +18,7 @@
 //! 1h15m30s // 1 hour 15 minutes 30 seconds
 //! ```
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Parse a duration expression and return seconds
 ///

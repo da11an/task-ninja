@@ -1,7 +1,7 @@
 use rusqlite::{Connection, OptionalExtension};
 use crate::models::{Stack, StackItem};
 use crate::repo::EventRepo;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Stack repository for database operations
 ///

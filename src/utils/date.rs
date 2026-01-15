@@ -21,7 +21,7 @@
 //! - Spring forward hour (invalid): error
 
 use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Datelike, Timelike};
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Parse a date expression and return Unix timestamp (UTC)
 ///

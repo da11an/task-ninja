@@ -813,7 +813,7 @@ fn parse_session_modify_args(args: Vec<String>) -> Result<(Option<Option<i64>>, 
 
 /// Format conflict error message
 fn format_conflict_error(session: &Session, conflicts: &[Session], conn: &Connection) -> Result<String> {
-    let task = TaskRepo::get_by_id(conn, session.task_id)?
+    let _task = TaskRepo::get_by_id(conn, session.task_id)?
         .ok_or_else(|| anyhow::anyhow!("Task {} not found", session.task_id))?;
     
     let mut msg = format!(

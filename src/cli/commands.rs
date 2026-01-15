@@ -1,16 +1,15 @@
-use clap::{Parser, Subcommand, Command};
+use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use crate::db::DbConnection;
 use crate::models::Task;
 use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo, ViewRepo};
 use crate::cli::parser::{parse_task_args, join_description};
-use crate::cli::commands_sessions::{handle_task_sessions_list, handle_task_sessions_show, handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_add};
-use crate::cli::output::{format_task_list_table, format_stack_display, format_task_summary, format_clock_list_table, TaskListOptions};
+use crate::cli::commands_sessions::{handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_add};
+use crate::cli::output::{format_task_list_table, format_task_summary, format_clock_list_table, TaskListOptions};
 use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec};
 use crate::utils::{parse_date_expr, parse_duration, fuzzy};
 use crate::filter::{parse_filter, filter_tasks};
 use crate::recur::RecurGenerator;
-use crate::cli::status;
 use crate::cli::abbrev;
 use chrono::{Local, TimeZone, Datelike};
 use std::collections::HashMap;
@@ -311,7 +310,7 @@ pub fn run() -> Result<()> {
         let cli = Cli::try_parse_from(std::env::args());
         match cli {
             Ok(_) => return Ok(()), // Version was printed by clap
-            Err(e) => {
+            Err(_e) => {
                 // If parsing fails, just print version manually
                 println!("task {}", env!("CARGO_PKG_VERSION"));
                 return Ok(());
@@ -1407,17 +1406,7 @@ fn handle_stack_clock_state_transactional(
     Ok(())
 }
 
-fn handle_stack_pick(index: i32) -> Result<()> {
-    let conn = DbConnection::connect()
-        .context("Failed to connect to database")?;
-    handle_stack_pick_with_clock(&conn, index, false, false)
-}
 
-fn handle_stack_drop(index: i32) -> Result<()> {
-    let conn = DbConnection::connect()
-        .context("Failed to connect to database")?;
-    handle_stack_drop_with_clock(&conn, index, false, false)
-}
 
 fn handle_task_enqueue(task_id_str: String) -> Result<()> {
     let conn = DbConnection::connect()
@@ -1500,7 +1489,7 @@ fn handle_clock(cmd: ClockCommands) -> Result<()> {
         ClockCommands::In { task_id: task_id_opt, mut args } => {
             if let Some(task_id_str) = task_id_opt {
                 // Check if it's a valid task ID (numeric) or if it's actually a time expression
-                if let Ok(task_id) = task_id_str.parse::<i64>() {
+                if let Ok(_task_id) = task_id_str.parse::<i64>() {
                     // Valid task ID - use it
                     handle_task_clock_in(task_id_str, args)
                 } else {
@@ -1824,7 +1813,7 @@ fn handle_annotation_add_with_filter(id_or_filter: String, note_args: Vec<String
     
     // Get current session if running (for session linking)
     let open_session = SessionRepo::get_open(&conn)?;
-    let session_id = open_session.as_ref().and_then(|s| s.id);
+    let _session_id = open_session.as_ref().and_then(|s| s.id);
     
     // Handle multiple tasks with confirmation
     if task_ids.len() > 1 {
@@ -2044,7 +2033,7 @@ fn handle_task_finish(
     
     // Get open session to check which tasks have running sessions
     let open_session = SessionRepo::get_open(&conn)?;
-    let running_task_id = open_session.as_ref().map(|s| s.task_id);
+    let _running_task_id = open_session.as_ref().map(|s| s.task_id);
     
     // Determine which tasks to complete
     let task_ids = if let Some(id_or_filter) = id_or_filter_opt {

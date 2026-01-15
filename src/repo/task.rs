@@ -525,7 +525,7 @@ impl TaskRepo {
     /// ```
     pub fn delete(conn: &Connection, task_id: i64) -> Result<()> {
         // Verify task exists
-        let task = Self::get_by_id(conn, task_id)?
+        let _task = Self::get_by_id(conn, task_id)?
             .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
         
         // Use transaction to ensure atomicity

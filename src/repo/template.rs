@@ -1,6 +1,6 @@
 use rusqlite::{Connection, OptionalExtension};
 use serde_json;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::collections::HashMap;
 
 /// Template repository for database operations

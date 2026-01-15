@@ -442,7 +442,7 @@ impl SessionRepo {
     /// - Only one open session allowed at a time
     pub fn find_overlapping_sessions(
         conn: &Connection,
-        task_id: i64,
+        _task_id: i64,
         start_ts: i64,
         end_ts: Option<i64>,
         exclude_session_id: Option<i64>,

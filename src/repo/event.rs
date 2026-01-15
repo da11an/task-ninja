@@ -1,6 +1,6 @@
 use rusqlite::Connection;
 use serde_json;
-use anyhow::{Context, Result};
+use anyhow::Result;
 
 /// Event repository for recording immutable task events
 pub struct EventRepo;

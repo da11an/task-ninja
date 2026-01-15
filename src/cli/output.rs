@@ -1,7 +1,7 @@
 // Output formatting utilities
 
 use crate::models::{Task, TaskStatus};
-use crate::repo::{ProjectRepo, AnnotationRepo, SessionRepo, StackRepo, TaskRepo};
+use crate::repo::{ProjectRepo, SessionRepo, StackRepo, TaskRepo};
 use crate::cli::priority::calculate_priority;
 use chrono::Local;
 use rusqlite::Connection;
@@ -111,7 +111,7 @@ pub fn format_date(ts: i64) -> String {
 
 /// Format date as relative time (e.g., "2 days ago", "in 3 days", "today", "overdue")
 pub fn format_relative_date(ts: i64) -> String {
-    use chrono::{Local, TimeZone, Datelike};
+    use chrono::{Local, TimeZone};
     let now = Local::now();
     let due_dt = Local.timestamp_opt(ts, 0)
         .single()
@@ -233,8 +233,6 @@ enum SortValue {
 
 #[derive(Debug, Clone)]
 struct TaskRow {
-    task: Task,
-    tags: Vec<String>,
     values: HashMap<TaskListColumn, String>,
     sort_values: HashMap<TaskListColumn, Option<SortValue>>,
 }
@@ -414,8 +412,6 @@ pub fn format_task_list_table(
         sort_values.insert(TaskListColumn::Status, Some(SortValue::Int(status_sort_order(task.status.as_str()))));
         
         rows.push(TaskRow {
-            task: task.clone(),
-            tags: tags.clone(),
             values,
             sort_values,
         });

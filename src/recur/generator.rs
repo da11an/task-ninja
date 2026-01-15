@@ -26,7 +26,7 @@
 //! The `recur_occurrences` table ensures idempotency by recording each generated occurrence.
 //! If a seed task and occurrence timestamp combination already exists, no new instance is created.
 
-use chrono::{DateTime, Datelike, Duration, TimeZone};
+use chrono::{DateTime, Datelike, Duration};
 use rusqlite::Connection;
 use anyhow::Result;
 use crate::recur::parser::{RecurRule, RecurFrequency};
@@ -172,7 +172,7 @@ impl RecurGenerator {
             let end_date = end_dt.date_naive();
             
             while current.date() <= end_date {
-                let current_dt = DateTime::<chrono::Utc>::from_utc(current, chrono::Utc);
+                let current_dt = DateTime::from_naive_utc_and_offset(current, chrono::Utc);
                 let current_ts = current_dt.timestamp();
                 
                 if current_ts > start_ts && current_ts <= end_ts {

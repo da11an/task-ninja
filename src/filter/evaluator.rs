@@ -25,7 +25,6 @@ use crate::repo::{TaskRepo, SessionRepo, StackRepo};
 use crate::filter::parser::FilterTerm;
 use rusqlite::Connection;
 use anyhow::Result;
-use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub enum FilterExpr {

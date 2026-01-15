@@ -491,9 +491,10 @@ fn format_sessions_list_table(
                 .collect::<Vec<_>>()
                 .join(":");
             
-            // Embed group label at the end of the divider line
-            let dash_count = total_width.saturating_sub(group_label.len());
-            output.push_str(&format!("{}{}\n", "-".repeat(dash_count), group_label));
+            // Embed group label at the start of the divider line in square brackets
+            let bracket_label = format!("[{}]", group_label);
+            let dash_count = total_width.saturating_sub(bracket_label.len());
+            output.push_str(&format!("{}{}\n", bracket_label, "-".repeat(dash_count)));
             
             for row in group_rows {
                 for (idx, column) in columns.iter().enumerate() {

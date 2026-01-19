@@ -36,6 +36,9 @@ pub enum Commands {
         /// Automatically clock in after creating task
         #[arg(long = "clock-in")]
         clock_in: bool,
+        /// Automatically enqueue task to clock stack after creating
+        #[arg(long = "enqueue")]
+        enqueue: bool,
         /// Automatically create project if it doesn't exist (non-interactive)
         #[arg(long = "auto-create-project")]
         auto_create_project: bool,
@@ -399,7 +402,7 @@ pub fn run() -> Result<()> {
 fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
-        Commands::Add { args, clock_in, auto_create_project } => handle_task_add(args, clock_in, auto_create_project),
+        Commands::Add { args, clock_in, enqueue, auto_create_project } => handle_task_add(args, clock_in, enqueue, auto_create_project),
         Commands::List { filter, json, relative } => {
             handle_task_list(filter, json, relative)
         },
@@ -658,13 +661,16 @@ fn handle_projects(cmd: ProjectCommands) -> Result<()> {
     }
 }
 
-fn handle_task_add(mut args: Vec<String>, mut clock_in: bool, auto_create_project: bool) -> Result<()> {
-    // Extract --clock-in flag from args if it appears after the description
+fn handle_task_add(mut args: Vec<String>, mut clock_in: bool, mut enqueue: bool, auto_create_project: bool) -> Result<()> {
+    // Extract --clock-in and --enqueue flags from args if they appear after the description
     // (CLAP limitation: with trailing_var_arg, flags after args are treated as part of args)
     let mut filtered_args = Vec::new();
     for arg in args.iter() {
         if arg == "--clock-in" {
             clock_in = true;
+            // Don't include it in the args passed to parse_task_args
+        } else if arg == "--enqueue" {
+            enqueue = true;
             // Don't include it in the args passed to parse_task_args
         } else {
             filtered_args.push(arg.clone());
@@ -824,11 +830,17 @@ fn handle_task_add(mut args: Vec<String>, mut clock_in: bool, auto_create_projec
     let task_id = task.id.unwrap();
     println!("Created task {}: {}", task_id, description);
     
-    // If --clock-in flag is set, clock in the newly created task
+    // If --clock-in flag is set, clock in the newly created task (takes precedence over --enqueue)
     if clock_in {
         // handle_task_clock_in will push to stack and clock in atomically
         handle_task_clock_in(task_id.to_string(), Vec::new())
             .context("Failed to clock in task")?;
+    } else if enqueue {
+        // Enqueue to clock stack (adds to end, does not start timing)
+        let stack = StackRepo::get_or_create_default(&conn)?;
+        StackRepo::enqueue(&conn, stack.id.unwrap(), task_id)
+            .context("Failed to enqueue task")?;
+        println!("Enqueued task {}", task_id);
     }
     
     Ok(())

@@ -18,7 +18,7 @@ Complete reference for all Task Ninja commands with examples and usage patterns.
 
 ## Task Commands
 
-### `task add [--clock-in] [--auto-create-project] <description> [attributes...]`
+### `task add [--clock-in] [--enqueue] [--auto-create-project] <description> [attributes...]`
 
 Add a new task with optional attributes.
 
@@ -26,7 +26,10 @@ Add a new task with optional attributes.
 
 **Options:**
 - `--clock-in` - Automatically clock in after creating task (pushes to clock[0] and starts timing)
+- `--enqueue` - Automatically enqueue task to clock stack after creating (adds to end, does not start timing)
 - `--auto-create-project` - Automatically create project if it doesn't exist (non-interactive mode)
+
+**Note:** If both `--clock-in` and `--enqueue` are specified, `--clock-in` takes precedence.
 
 **Attributes:**
 - `project:<name>` - Assign to project
@@ -59,6 +62,10 @@ task add Customer call uda.client:acme uda.priority:high
 # Task with --clock-in (automatically starts timing)
 task add --clock-in Start working on feature
 task add --clock-in "Fix urgent bug" project:work +urgent
+
+# Task with --enqueue (adds to clock stack without starting timing)
+task add --enqueue "Review documentation" project:docs
+task add --enqueue "Write tests" project:work due:tomorrow allocation:2h
 
 # Task with new project (interactive prompt)
 task add "New feature" project:newproject

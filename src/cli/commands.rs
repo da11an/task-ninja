@@ -6,7 +6,7 @@ use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo,
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_add, handle_sessions_report};
 use crate::cli::output::{format_task_list_table, format_task_summary, format_clock_list_table, TaskListOptions};
-use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec};
+use crate::cli::error::{user_error, validate_task_id, validate_project_name, parse_task_id_spec, parse_task_id_list};
 use crate::utils::{parse_date_expr, parse_duration, fuzzy};
 use crate::filter::{parse_filter, filter_tasks};
 use crate::recur::RecurGenerator;
@@ -143,8 +143,8 @@ pub enum Commands {
     },
     /// Add task to end of clock stack
     Enqueue {
-        /// Task ID to enqueue
-        task_id: i64,
+        /// Task ID(s) to enqueue (comma-separated list)
+        task_id: String,
     },
     /// Recurrence management commands
     Recur {
@@ -462,7 +462,7 @@ fn handle_command(cli: Cli) -> Result<()> {
             handle_task_delete(target, yes, interactive)
         }
         Commands::Enqueue { task_id } => {
-            handle_task_enqueue(task_id.to_string())
+            handle_task_enqueue(task_id)
         }
         Commands::Recur { subcommand } => {
             handle_recur(subcommand)
@@ -1436,21 +1436,43 @@ fn handle_task_enqueue(task_id_str: String) -> Result<()> {
     let conn = DbConnection::connect()
         .context("Failed to connect to database")?;
     
-    let task_id = match validate_task_id(&task_id_str) {
-        Ok(id) => id,
+    // Parse comma-separated list of IDs (preserves order)
+    let task_ids = match parse_task_id_list(&task_id_str) {
+        Ok(ids) => ids,
         Err(e) => user_error(&e),
     };
     
-    // Check if task exists
-    if TaskRepo::get_by_id(&conn, task_id)?.is_none() {
-        user_error(&format!("Task {} not found", task_id));
+    // Validate all tasks exist before enqueueing any
+    let mut valid_ids = Vec::new();
+    let mut missing_ids = Vec::new();
+    
+    for task_id in &task_ids {
+        if TaskRepo::get_by_id(&conn, *task_id)?.is_some() {
+            valid_ids.push(*task_id);
+        } else {
+            missing_ids.push(*task_id);
+        }
     }
     
-    let stack = StackRepo::get_or_create_default(&conn)?;
-    StackRepo::enqueue(&conn, stack.id.unwrap(), task_id)
-        .context("Failed to enqueue task")?;
+    if !missing_ids.is_empty() {
+        user_error(&format!("Task(s) not found: {}", 
+            missing_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(", ")));
+    }
     
-    println!("Enqueued task {}", task_id);
+    if valid_ids.is_empty() {
+        user_error("No valid tasks to enqueue");
+    }
+    
+    // Enqueue all tasks in order
+    let stack = StackRepo::get_or_create_default(&conn)?;
+    let stack_id = stack.id.unwrap();
+    
+    for task_id in valid_ids {
+        StackRepo::enqueue(&conn, stack_id, task_id)
+            .context(format!("Failed to enqueue task {}", task_id))?;
+        println!("Enqueued task {}", task_id);
+    }
+    
     Ok(())
 }
 

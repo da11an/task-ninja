@@ -124,6 +124,82 @@ pub fn parse_task_id_spec(spec: &str) -> Result<Vec<i64>, String> {
     Ok(ids)
 }
 
+/// Parse comma-separated task IDs and ranges preserving order
+/// Unlike parse_task_id_spec, this does NOT sort or deduplicate
+/// Returns IDs in the order specified (duplicates filtered, first occurrence preserved)
+/// Supports ranges like "30-31" and mixed lists like "1,3,5-7,10"
+pub fn parse_task_id_list(spec: &str) -> Result<Vec<i64>, String> {
+    let spec = spec.trim();
+    if spec.is_empty() {
+        return Err("Empty task ID list".to_string());
+    }
+    
+    let mut ids = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    
+    // Split by comma
+    let parts: Vec<&str> = spec.split(',').map(|s| s.trim()).collect();
+    
+    for part in parts {
+        if part.is_empty() {
+            continue;
+        }
+        
+        // Check if this is a range (contains '-')
+        if part.contains('-') {
+            let range_parts: Vec<&str> = part.split('-').map(|s| s.trim()).collect();
+            if range_parts.len() != 2 {
+                return Err(format!("Invalid range syntax: '{}'. Range must be two numbers separated by '-'.", part));
+            }
+            
+            let start = range_parts[0].parse::<i64>()
+                .map_err(|_| format!("Invalid start ID in range '{}': must be a number", part))?;
+            let end = range_parts[1].parse::<i64>()
+                .map_err(|_| format!("Invalid end ID in range '{}': must be a number", part))?;
+            
+            if start <= 0 || end <= 0 {
+                return Err(format!("Task IDs in range '{}' must be positive", part));
+            }
+            
+            // Generate IDs in range (inclusive, preserving direction)
+            let step = if start <= end { 1 } else { -1 };
+            let mut current = start;
+            loop {
+                // Only add if not already seen (preserve first occurrence order)
+                if !seen.contains(&current) {
+                    ids.push(current);
+                    seen.insert(current);
+                }
+                
+                if current == end {
+                    break;
+                }
+                current += step;
+            }
+        } else {
+            // Single ID
+            let id = part.parse::<i64>()
+                .map_err(|_| format!("Invalid task ID '{}': must be a number", part))?;
+            
+            if id <= 0 {
+                return Err(format!("Task ID '{}' must be positive", id));
+            }
+            
+            // Only add if not already seen (preserve first occurrence order)
+            if !seen.contains(&id) {
+                ids.push(id);
+                seen.insert(id);
+            }
+        }
+    }
+    
+    if ids.is_empty() {
+        return Err("No valid task IDs found".to_string());
+    }
+    
+    Ok(ids)
+}
+
 /// Validate that a stack index is valid (non-negative integer)
 pub fn validate_stack_index(index_str: &str) -> Result<i32, String> {
     index_str.parse::<i32>()

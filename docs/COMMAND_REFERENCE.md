@@ -354,14 +354,32 @@ task clock list
 task clock list --json
 ```
 
-### `task clock enqueue <id>`
+### `task clock enqueue <id|id,id,...|range|mixed>`
 
-Add task to end of clock stack (do it later).
+Add task(s) to end of clock stack (do it later).
+
+**Arguments:**
+- `<id>` - Single task ID
+- `<id,id,...>` - Comma-separated list of task IDs (enqueued in listed order)
+- `<start-end>` - Range of task IDs (e.g., `30-31` expands to 30, 31)
+- Mixed syntax - Combine lists and ranges (e.g., `1,3-5,10`)
 
 **Examples:**
 ```bash
+# Enqueue single task
 task clock enqueue 10
-task clock enqueue 11
+
+# Enqueue multiple tasks
+task clock enqueue 1,3,5
+
+# Enqueue range
+task clock enqueue 30-31
+
+# Enqueue mixed (ranges and individual IDs)
+task clock enqueue 1,3-5,10
+
+# Enqueue with spaces
+task clock enqueue 1, 3, 5
 ```
 
 ### `task clock pick <index>`

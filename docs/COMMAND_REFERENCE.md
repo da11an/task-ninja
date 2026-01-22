@@ -9,7 +9,7 @@ Complete reference for all Tatl commands with examples and usage patterns.
 - [Timing Commands](#timing-commands)
 - [Session Commands](#session-commands)
 - [Status Command](#status-command)
-- [Recurrence Commands](#recurrence-commands)
+- [Respawning Tasks](#respawning-tasks)
 - [Filter Syntax](#filter-syntax)
 - [Date Expressions](#date-expressions)
 - [Duration Format](#duration-format)
@@ -39,26 +39,26 @@ Add a new task with optional attributes.
 - `wait:<expr>` - Set wait date
 - `allocation:<duration>` - Set time allocation
 - `template:<name>` - Use template
-- `recur:<rule>` - Set recurrence rule
+- `respawn:<pattern>` - Set respawn rule (creates new instance on completion)
 - `+<tag>` - Add tag
 - `uda.<key>:<value>` - Set user-defined attribute
 
 **Examples:**
 ```bash
 # Simple task
-task add Fix bug in authentication
+tatl add Fix bug in authentication
 
 # Tatl with project and tags
-task add Review PR project:work +code-review +urgent
+tatl add Review PR project:work +code-review +urgent
 
 # Tatl with due date and allocation
-task add Write documentation project:docs due:tomorrow allocation:2h
+tatl add Write documentation project:docs due:tomorrow allocation:2h
 
-# Tatl with template and recurrence
-task add Daily standup template:meeting recur:daily
+# Tatl with respawn rule (creates new instance when completed)
+tatl add "Daily standup" respawn:daily due:09:00
 
 # Tatl with UDA
-task add Customer call uda.client:acme uda.priority:high
+tatl add Customer call uda.client:acme uda.priority:high
 
 # Task with --on (automatically starts timing)
 tatl add --on Start working on feature
@@ -96,23 +96,23 @@ List tasks matching optional filter.
 **Examples:**
 ```bash
 # List all tasks
-task list
+tatl list
 
 # List with filter
-task list project:work
-task list +urgent
-task list status:pending
+tatl list project:work
+tatl list +urgent
+tatl list status:pending
 
 # Sort and group
-task list sort:project,priority group:kanban
+tatl list sort:project,priority group:kanban
 
 # Save a list view alias
-task list project:work sort:project --add-alias mywork
-task list mywork
+tatl list project:work sort:project --add-alias mywork
+tatl list mywork
 
 # JSON output
-task list --json
-task list project:work +urgent --json
+tatl list --json
+tatl list project:work +urgent --json
 ```
 
 ### `tatl modify <id|filter> [attributes...] [--yes] [--interactive]`
@@ -126,19 +126,19 @@ Modify one or more tasks.
 **Examples:**
 ```bash
 # Modify single task
-task modify 10 +urgent due:+2d
+tatl modify 10 +urgent due:+2d
 
 # Modify multiple tasks (with confirmation)
-task modify project:work description:Updated description
+tatl modify project:work description:Updated description
 
 # Modify with --yes flag
-task modify +urgent due:+1d --yes
+tatl modify +urgent due:+1d --yes
 
 # Modify with new project (prompts to create)
-task modify 10 project:newproject
+tatl modify 10 project:newproject
 
 # Clear attributes
-task 10 modify project:none due:none allocation:none
+tatl 10 modify project:none due:none allocation:none
 ```
 
 ### `tatl finish [<id|filter>] [--at <expr>] [--next] [--yes] [--interactive]`
@@ -153,8 +153,8 @@ Complete one or more tasks.
 5. If `--next` and clock stack non-empty: starts session for new clock[0]
 
 **Notes:**
-- `task finish` (without ID/filter) requires clock[0] and a running session
-- `task finish <id>` or `task finish <filter>` works even if task is not clocked in
+- `tatl finish` (without ID/filter) requires clock[0] and a running session
+- `tatl finish <id>` or `tatl finish <filter>` works even if task is not clocked in
 - If a session exists for the task, it will be closed when completing
 
 **Options:**
@@ -166,19 +166,19 @@ Complete one or more tasks.
 **Examples:**
 ```bash
 # Complete current task (requires clocked in)
-task finish
+tatl finish
 
 # Complete specific task (works even if not clocked in)
-task finish 10
+tatl finish 10
 
 # Complete with --next
-task finish --next
+tatl finish --next
 
 # Complete at specific time
-task finish 10 --at 17:00
+tatl finish 10 --at 17:00
 
 # Complete multiple tasks
-task finish +urgent --yes
+tatl finish +urgent --yes
 ```
 
 ### `tatl close <id|filter> [--yes] [--interactive]`
@@ -186,7 +186,7 @@ task finish +urgent --yes
 Close one or more tasks (sets status to `closed`).
 
 **Notes:**
-- `task close <id>` or `task close <filter>` works even if task is not clocked in
+- `tatl close <id>` or `tatl close <filter>` works even if task is not clocked in
 - If a session exists for the task, it will be closed when closing
 
 **Options:**
@@ -196,10 +196,10 @@ Close one or more tasks (sets status to `closed`).
 **Examples:**
 ```bash
 # Close a task
-task close 10
+tatl close 10
 
 # Close multiple tasks
-task close project:work --yes
+tatl close project:work --yes
 ```
 
 ### `tatl annotate [<id>] <note...> [--task <id>] [--delete <annotation_id>]`
@@ -219,16 +219,16 @@ Add or delete annotation to/from a task.
 **Examples:**
 ```bash
 # Annotate specific task
-task annotate 10 Found the bug in auth module
+tatl annotate 10 Found the bug in auth module
 
 # Annotate current LIVE task
-task annotate Investigating flaky tests
+tatl annotate Investigating flaky tests
 
 # Multiple words in annotation
-task annotate 10 This is a longer note with multiple words
+tatl annotate 10 This is a longer note with multiple words
 
 # Delete annotation
-task annotate 10 --delete 5
+tatl annotate 10 --delete 5
 ```
 
 ### `tatl show <id|filter>`
@@ -238,16 +238,16 @@ Show detailed summary of task(s).
 **Examples:**
 ```bash
 # Show single task
-task show 10
+tatl show 10
 
 # Show task range
-task show 1-3
+tatl show 1-3
 
-# Show task list
-task show 1,3,5
+# Show tatl list
+tatl show 1,3,5
 
 # Show with filter
-task show project:work
+tatl show project:work
 ```
 
 ### `tatl delete <id|filter> [--yes] [--interactive]`
@@ -261,13 +261,13 @@ Permanently delete task(s).
 **Examples:**
 ```bash
 # Delete single task
-task delete 10
+tatl delete 10
 
 # Delete with confirmation
-task delete 10 --yes
+tatl delete 10 --yes
 
 # Delete multiple tasks
-task delete +old --yes
+tatl delete +old --yes
 ```
 
 ---
@@ -281,11 +281,11 @@ Create a new project.
 **Examples:**
 ```bash
 # Simple project
-task projects add work
+tatl projects add work
 
 # Nested project (dot notation)
-task projects add admin.email
-task projects add sales.northamerica.texas
+tatl projects add admin.email
+tatl projects add sales.northamerica.texas
 ```
 
 ### `tatl projects list [--archived]`
@@ -298,10 +298,10 @@ List all projects.
 **Examples:**
 ```bash
 # List active projects
-task projects list
+tatl projects list
 
 # List all projects including archived
-task projects list --archived
+tatl projects list --archived
 ```
 
 ### `tatl projects rename <old_name> <new_name> [--force]`
@@ -318,10 +318,10 @@ Rename a project.
 **Examples:**
 ```bash
 # Rename project
-task projects rename temp work
+tatl projects rename temp work
 
 # Merge projects
-task projects rename temp work --force
+tatl projects rename temp work --force
 ```
 
 ### `tatl projects archive <name>`
@@ -330,7 +330,7 @@ Archive a project.
 
 **Examples:**
 ```bash
-task projects archive old-project
+tatl projects archive old-project
 ```
 
 ---
@@ -364,7 +364,7 @@ tatl on 09:00..11:00
 # Push task 5 to top and start timing
 tatl on 5
 
-# Push task 10 to top and start at specific time
+# Push tatl 10 to top and start at specific time
 tatl on 10 09:00
 ```
 
@@ -429,7 +429,7 @@ Add a historical session for a task. Replaces `sessions add`.
 # Add session for queue[0] from 09:00 to 12:00 today
 tatl onoff 09:00..12:00
 
-# Add session for task 10 from 09:00 to 12:00
+# Add session for tatl 10 from 09:00 to 12:00
 tatl onoff 09:00..12:00 10
 
 # Insert session into overlapping time without confirmation
@@ -503,7 +503,7 @@ List session history.
 - If filter arguments provided: lists sessions for tasks matching the filter
 - If filter omitted: lists all sessions
 - Filters sessions by task attributes (project, tags, etc.)
-- Supports same filter syntax as `task list`
+- Supports same filter syntax as `tatl list`
 
 **Options:**
 - `<filter>...` - Filter arguments (e.g., "project:work +urgent")
@@ -514,33 +514,33 @@ List session history.
 **Examples:**
 ```bash
 # List all sessions
-task sessions list
+tatl sessions list
 
 # List sessions for specific task
-task sessions list 10
+tatl sessions list 10
 
 # Filter by project
-task sessions list project:work
+tatl sessions list project:work
 
 # Filter by tags
-task sessions list +urgent
+tatl sessions list +urgent
 
 # Multiple filter arguments
-task sessions list project:work +urgent
+tatl sessions list project:work +urgent
 
 # Sort/group
-task sessions list sort:start group:task
+tatl sessions list sort:start group:task
 
 # Save a list view alias
-task sessions list project:work sort:start --add-alias worksessions
-task sessions list worksessions
+tatl sessions list project:work sort:start --add-alias worksessions
+tatl sessions list worksessions
 
 # JSON output
-task sessions list --json
-task sessions list project:work --json
+tatl sessions list --json
+tatl sessions list project:work --json
 
 # Legacy --task flag (still supported)
-task sessions list --task 10
+tatl sessions list --tatl 10
 ```
 
 ### `tatl sessions show [--task <id|filter>]`
@@ -554,17 +554,17 @@ Show detailed session information.
 **Examples:**
 ```bash
 # Show current session
-task sessions show
+tatl sessions show
 
 # Show most recent session for task
-task sessions show --task 10
+tatl sessions show --tatl 10
 ```
 
 ### `tatl sessions modify <session_id> [start:<expr>] [end:<expr>] [--yes] [--force]`
 
 Modify session start and/or end times.
 
-**Syntax:** CLAP-native: `task sessions modify <session_id> [start:<expr>] [end:<expr>]`
+**Syntax:** CLAP-native: `tatl sessions modify <session_id> [start:<expr>] [end:<expr>]`
 
 **Fields:**
 - `start:<expr>` - Modify start time (date expression)
@@ -589,30 +589,30 @@ Modify session start and/or end times.
 **Examples:**
 ```bash
 # Modify start time
-task sessions 5 modify start:09:00
+tatl sessions 5 modify start:09:00
 
 # Modify end time
-task sessions 5 modify end:17:00
+tatl sessions 5 modify end:17:00
 
 # Modify both
-task sessions 5 modify start:09:00 end:17:00
+tatl sessions 5 modify start:09:00 end:17:00
 
 # Close an open session
-task sessions 5 modify end:now
+tatl sessions 5 modify end:now
 
 # Make a closed session open (clear end time)
-task sessions 5 modify end:none
+tatl sessions 5 modify end:none
 
 # Modify with confirmation bypass
-task sessions 5 modify start:09:00 --yes
+tatl sessions 5 modify start:09:00 --yes
 
 # Force modification despite conflicts
-task sessions 5 modify start:10:00 --force
+tatl sessions 5 modify start:10:00 --force
 ```
 
 **Conflict Example:**
 ```bash
-$ task sessions 5 modify start:10:00
+$ tatl sessions 5 modify start:10:00
 Error: Session modification would create conflicts:
 
   Session 5 (Task 10): 2024-01-15 10:00:00 - 2024-01-15 11:00:00
@@ -626,7 +626,7 @@ Use --force to override (may require resolving conflicts manually).
 
 Delete a session.
 
-**Syntax:** CLAP-native: `task sessions delete <session_id> [--yes]`
+**Syntax:** CLAP-native: `tatl sessions delete <session_id> [--yes]`
 
 **Options:**
 - `--yes` - Delete without confirmation
@@ -639,10 +639,10 @@ Delete a session.
 **Examples:**
 ```bash
 # Delete session (with confirmation)
-task sessions delete 5
+tatl sessions delete 5
 
 # Delete session (without confirmation)
-task sessions delete 5 --yes
+tatl sessions delete 5 --yes
 ```
 
 **Confirmation Prompt:**
@@ -696,10 +696,10 @@ Priority tasks exclude tasks already in the clock stack, as those are already be
 **Examples:**
 ```bash
 # Show dashboard
-task status
+tatl status
 
 # JSON output
-task status --json
+tatl status --json
 ```
 
 **Output Format:**
@@ -770,47 +770,70 @@ The `--json` flag outputs structured data:
 
 ---
 
-## Recurrence Commands
+## Respawning Tasks
 
-### `tatl recur run [--until <date_expr>]`
+Tasks with a `respawn` rule automatically create a new instance when completed or closed. This differs from traditional recurrence:
 
-Generate recurring task instances.
+| Recurrence (Traditional) | Respawning (TATL) |
+|-------------------------|-------------------|
+| Pre-generates many instances | One active instance at a time |
+| Missed tasks pile up | Single obligation persists |
+| Time-based trigger | Completion-based trigger |
+| Fixed due dates | Due dates relative to completion |
 
-**Behavior:**
-- Finds all seed tasks (tasks with `recur` field)
-- Generates instances up to `--until` date (default: 30 days from now)
-- Idempotent: running multiple times produces same results
-
-**Options:**
-- `--until <date_expr>` - Generate instances up to this date
-
-**Examples:**
-```bash
-# Generate instances for next 30 days
-task recur run
-
-# Generate instances until specific date
-task recur run --until 2026-12-31
-task recur run --until +90d
-```
-
-### Creating Recurring Tasks
-
-Recurring tasks are created with the `recur` attribute:
+### Creating Respawning Tasks
 
 ```bash
-# Daily task
-task add Daily standup recur:daily template:meeting
+# Daily task - respawns tomorrow when completed
+tatl add "Daily standup" respawn:daily due:09:00
 
-# Weekly task (Mondays)
-task add Weekly review recur:weekly byweekday:mon
+# Weekly task
+tatl add "Weekly review" respawn:weekly due:friday
 
-# Monthly task (1st of month)
-task add Monthly report recur:monthly bymonthday:1
+# Specific weekdays
+tatl add "Team sync" respawn:weekdays:mon,wed,fri due:10:00
 
-# Custom interval
-task add Check email recur:every:2h
+# Specific days of month
+tatl add "Timesheet" respawn:monthdays:14,30 due:17:00
+
+# Nth weekday of month
+tatl add "Monthly board meeting" respawn:nth:2:tue due:14:00
+
+# Custom intervals
+tatl add "Check-in" respawn:every:3d
+tatl add "Quarterly review" respawn:every:3m
 ```
+
+### Respawn Patterns
+
+| Pattern | Example | Description |
+|---------|---------|-------------|
+| `daily` | `respawn:daily` | Every day |
+| `weekly` | `respawn:weekly` | Every 7 days |
+| `monthly` | `respawn:monthly` | Same day each month |
+| `yearly` | `respawn:yearly` | Same date each year |
+| `every:Nd` | `respawn:every:3d` | Every N days |
+| `every:Nw` | `respawn:every:2w` | Every N weeks |
+| `every:Nm` | `respawn:every:6m` | Every N months |
+| `every:Ny` | `respawn:every:1y` | Every N years |
+| `weekdays:` | `respawn:weekdays:mon,fri` | Specific weekdays |
+| `monthdays:` | `respawn:monthdays:1,15` | Specific days of month |
+| `nth:N:day` | `respawn:nth:2:tue` | Nth weekday of month |
+
+### Respawn Behavior
+
+When you finish or close a task with a respawn rule:
+
+```bash
+tatl finish
+# Finished task 5
+# ↻ Respawned as task 6, due: 2026-01-23 09:00
+```
+
+- **Due date**: Calculated from completion date, not original due date
+- **Attributes**: All attributes carried forward (project, tags, allocation)
+- **Status**: New instance starts as `pending`
+- **Delete**: Deleting a task ends the respawn chain (no new instance)
 
 ---
 
@@ -850,21 +873,21 @@ Filter tokens allow unambiguous abbreviations:
 
 ```bash
 # AND (implicit)
-task list project:work +urgent
-task list status:pending due:tomorrow
+tatl list project:work +urgent
+tatl list status:pending due:tomorrow
 
 # OR (explicit)
-task list +urgent or +important
-task list project:work or project:home
+tatl list +urgent or +important
+tatl list project:work or project:home
 
 # NOT
-task list not +waiting
-task list not project:work
+tatl list not +waiting
+tatl list not project:work
 
 # Complex filters
-task list project:work +urgent or project:home +important
-task list status:pending not +waiting
-task list (project:work or project:home) +urgent  # Note: parentheses not yet supported
+tatl list project:work +urgent or project:home +important
+tatl list status:pending not +waiting
+tatl list (project:work or project:home) +urgent  # Note: parentheses not yet supported
 ```
 
 ---
@@ -923,16 +946,16 @@ eom      # End of month
 
 ```bash
 # Due dates
-task add Review PR due:tomorrow
-task add Fix bug due:+2d
-task add Meeting due:2026-01-15T14:00
+tatl add Review PR due:tomorrow
+tatl add Fix bug due:+2d
+tatl add Meeting due:2026-01-15T14:00
 
 # Scheduled dates
-task add Prepare presentation scheduled:next Monday
-task add Follow up scheduled:+1w
+tatl add Prepare presentation scheduled:next Monday
+tatl add Follow up scheduled:+1w
 
 # Wait dates
-task add Start project wait:2026-02-01
+tatl add Start project wait:2026-02-01
 ```
 
 ---
@@ -966,10 +989,10 @@ Durations use unit suffixes: `d` (days), `h` (hours), `m` (minutes), `s` (second
 - Solution: Start a session with `task clock in` or `task <id> clock in`
 
 **Error: Task not found**
-- Solution: Verify task ID with `task list`
+- Solution: Verify task ID with `tatl list`
 
 **Error: Project not found**
-- Solution: Create project with `task projects add <name>`
+- Solution: Create project with `tatl projects add <name>`
 
 **Error: Filter parse error**
 - Solution: Check filter syntax, ensure proper spacing around `or` and `not`

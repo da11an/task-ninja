@@ -1,232 +1,252 @@
 # TATL - Task and Time Ledger
 
-A powerful command-line task and time tracking tool built with Rust and SQLite - your ledger for tasks and time.
+A command-line task and time tracking tool built with Rust and SQLite. TATL focuses on **doing work, not managing work** - simple semantics for tracking what you're working on and how long you spend on it.
+
+## Philosophy
+
+TATL is designed around a simple insight: **most task management is procrastination in disguise**. Instead of elaborate organizational systems, TATL provides:
+
+- **A work queue**: What's next? Just look at `queue[0]`
+- **Start/stop timing**: `tatl on`, `tatl off` - that's it
+- **Respawning tasks**: Repeating obligations create new instances only when you complete them
+- **Immutable history**: Every change is recorded. No data is ever lost.
 
 ## Features
 
-- **Task Management**: Add, modify, list, complete, and annotate tasks
-- **Projects**: Organize tasks with hierarchical projects (e.g., `work`, `work.email`)
-- **Tags**: Flexible tagging system with `+tag` / `-tag` syntax
-- **Scheduling**: Due dates, scheduled dates, and wait times
+### Implemented
+
+- **Task Management**: Create, modify, list, complete, close, and delete tasks
+- **Projects**: Hierarchical project organization (e.g., `work`, `work.email`)
+- **Tags**: Flexible tagging with `+tag` / `-tag` syntax
+- **Scheduling**: Due dates, scheduled dates, and wait times with natural date expressions
 - **Time Tracking**: Simple `on`/`off` timing with break capture (`offon`) and historical sessions (`onoff`)
-- **Task Queue**: Work queue with "do it now" vs "do it later" semantics
-- **Recurrence**: Recurring tasks with templates and flexible recurrence rules
+- **Task Queue**: Work queue semantics - `queue[0]` is always "what's next"
+- **Respawning**: Tasks with respawn rules create a new instance when completed
 - **UDAs**: User-defined attributes for custom task properties
 - **Annotations**: Timestamped notes linked to tasks and sessions
-- **Immutable History**: Complete audit trail of all task changes
+- **Filters**: Powerful filter expressions with AND, OR, NOT operators
+- **Kanban Status**: Derived statuses (proposed, queued, paused, NEXT, LIVE, done)
+- **Immutable History**: Complete audit trail of all task changes via event log
+
+### Potential Future Work
+
+- Templates for standardized task creation
+- Time reports and analytics
+- Import/export functionality
+- Sync between devices
 
 ## Installation
 
-### From Source (Rust)
+### From Source
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/da11an/tatl.git
 cd tatl
 
 # Build release version
 cargo build --release
 
-# Install to ~/.cargo/bin/ (or $CARGO_HOME/bin)
+# Install to ~/.cargo/bin/
 cargo install --path .
 ```
 
-The `tatl` command will be available in your PATH (typically `~/.cargo/bin/tatl`).
+The `tatl` command will be available in your PATH.
 
-**Note:** If you have Taskwarrior installed, it also uses the `tatl` command. You can:
-- Use the full path: `~/.cargo/bin/tatl`
-- Create an alias: `alias tatl='~/.cargo/bin/tatl'`
-- Add `~/.cargo/bin` to the beginning of your PATH to prioritize this installation
-- Rename the binary by modifying `Cargo.toml` if you prefer a different name
-
-### Local Development Installation
-
-For local testing without installing globally:
+### Local Development
 
 ```bash
-# Build in release mode
+# Build and use directly
 cargo build --release
-
-# Use directly
 ./target/release/tatl list
 
-# Or create an alias in your current shell
+# Or create an alias
 alias tatl='./target/release/tatl'
-tatl list
 ```
 
-See `INSTALL.md` for more detailed installation options and conflict resolution with Taskwarrior.
+See `INSTALL.md` for detailed installation options.
 
 ## Quick Start
 
 ```bash
-# Add a new task
-tatl add fix the bug project:work +urgent
+# Add tasks
+tatl add "Fix the auth bug" project:work +urgent
+tatl add "Review PR" project:work due:tomorrow
 
-# List tasks
+# View your tasks
 tatl list
-tatl list project:work
-tatl list +urgent
 
-# Start working on a task
-tatl on 10      # Push task 10 to top and start timing
-tatl on         # Start timing queue[0]
+# Start working - pick a task and go
+tatl on 1           # Push task 1 to queue[0] and start timing
+tatl on             # Start timing queue[0]
 
-# Add task to queue (do it later)
-tatl enqueue 11
+# Take a break? Capture it
+tatl offon 14:30    # I was interrupted at 14:30, resuming now
 
-# Add annotation while working
-tatl annotate 10 Found the issue in auth module
+# Done with the task
+tatl finish         # Complete queue[0], stop timing
 
-# Stop timing and capture a break
-tatl off                    # Stop now
-tatl offon 14:30            # Interrupted at 14:30, resume now
-tatl offon 14:30..15:00     # 30 min break, resume at 15:00
-
-# Add historical session
-tatl onoff 09:00..12:00     # Add session for queue[0]
-tatl onoff 09:00..12:00 10  # Add session for task 10
-
-# Complete a task
-tatl finish     # Finish queue[0]
-tatl finish 10  # Finish specific task
-
-# View session history
-tatl sessions list
+# Log time you forgot to track
+tatl onoff 09:00..12:00 2    # Add 3-hour session to task 2
 ```
 
-## Database
+## Core Concepts
 
-The database is stored at `~/.tatl/ledger.db` by default. You can override this location by creating a configuration file at `~/.tatl/rc`:
+### The Task Queue
 
+The queue is your "currently working on" list. Position 0 is always "what's next":
+
+```bash
+tatl list           # Shows queue with positions
+tatl on             # Start timing queue[0]
+tatl on 5           # Move task 5 to queue[0] and start
+tatl enqueue 3      # Add task 3 to bottom of queue
+tatl dequeue        # Remove queue[0] from queue
 ```
-data.location=/path/to/your/tasks.db
+
+### Time Tracking
+
+Simple start/stop semantics:
+
+```bash
+tatl on             # Start timing queue[0]
+tatl on 5           # Start timing task 5 (moves to queue[0])
+tatl off            # Stop timing
+
+# Capture breaks retroactively
+tatl offon 14:30              # I left at 14:30, resuming now
+tatl offon 14:30..15:00       # 30-minute break
+
+# Log historical sessions
+tatl onoff 09:00..12:00       # Log session for queue[0]
+tatl onoff 09:00..12:00 5     # Log session for task 5
 ```
 
-The database is created automatically on first use.
+### Respawning (Not Recurrence)
 
-## Command Examples
+Traditional recurrence creates multiple task instances upfront. TATL uses **respawning** instead:
+
+- Only one active instance exists at a time
+- New instance is created **when you complete** the current one
+- Missed deadlines don't pile up as separate tasks
+- Next due date is calculated from completion date
+
+```bash
+# Create a respawning task
+tatl add "Daily standup" respawn:daily due:09:00
+tatl add "Weekly review" respawn:weekly due:friday
+tatl add "Timesheet" respawn:monthdays:14,30 due:17:00
+
+# When you finish it...
+tatl finish
+# Output:
+# Finished task 1
+# ↻ Respawned as task 2, due: 2026-01-23 09:00
+
+# Respawn patterns:
+# respawn:daily              - Every day
+# respawn:weekly             - Every week
+# respawn:monthly            - Every month
+# respawn:every:3d           - Every 3 days
+# respawn:weekdays:mon,wed,fri  - Specific weekdays
+# respawn:monthdays:1,15     - Specific days of month
+# respawn:nth:2:tue          - 2nd Tuesday of month
+```
+
+### Kanban Status
+
+Tasks have derived Kanban statuses based on their state:
+
+| Status | Meaning |
+|--------|---------|
+| `proposed` | Not in queue, no work done yet |
+| `queued` | In queue, waiting its turn |
+| `paused` | Has sessions but not currently in queue |
+| `NEXT` | At queue[0], ready to work |
+| `LIVE` | At queue[0] with active timing session |
+| `done` | Completed or closed |
+
+```bash
+tatl list kanban:LIVE        # Show actively-timed task
+tatl list kanban:queued      # Show queued tasks
+```
+
+## Command Reference
 
 ### Tasks
 
 ```bash
-# Add task with project, tags, and due date
-tatl add Review PR project:work +code due:tomorrow
+# Create
+tatl add "Description" project:name +tag due:tomorrow
+tatl add "Quick task" --on          # Create and start timing
+tatl add "Past work" --onoff 09:00..12:00  # Create with historical session
 
-# Add task and start timing immediately
-tatl add --on "Urgent fix" project:work +urgent
+# Read
+tatl list                           # All pending tasks
+tatl list project:work +urgent      # With filters
+tatl show 5                         # Detailed view
 
-# Add task with historical session
-tatl add "Yesterday's meeting" --onoff 09:00..10:00 project:meetings
+# Update
+tatl modify 5 +urgent due:+2d       # Add tag, change due date
+tatl annotate 5 "Found the issue"   # Add note
 
-# Modify task
-tatl modify 10 +urgent due:+2d
-
-# List with filters
-tatl list project:work +urgent
-tatl list +urgent or +important
-tatl list not +waiting
-
-# Annotate task
-tatl annotate 10 Started investigation
-
-# Complete task
-tatl finish     # Finish queue[0]
-tatl finish 10  # Finish specific task
-```
-
-### Projects
-
-```bash
-# Create projects
-tatl projects add work
-tatl projects add admin.email  # Nested project
-
-# List projects
-tatl projects list
-tatl projects list --archived
-
-# Rename project
-tatl projects rename work office
-
-# Archive project
-tatl projects archive old-project
+# Complete
+tatl finish                         # Complete queue[0]
+tatl finish 5                       # Complete specific task
+tatl close 5                        # Close without completing
+tatl reopen 5                       # Reopen a closed task
+tatl delete 5                       # Permanently delete
 ```
 
 ### Time Tracking
 
 ```bash
-# Start timing
-tatl on           # Start queue[0]
-tatl on 10        # Push task 10 to top and start
-tatl on 09:00     # Start at specific time
+tatl on                     # Start timing queue[0]
+tatl on 5                   # Start timing task 5
+tatl on 09:00               # Start at specific time
+tatl off                    # Stop timing
+tatl off 17:00              # Stop at specific time
 
-# Stop timing
-tatl off          # Stop now
-tatl off 17:00    # Stop at specific time
+# Break capture
+tatl offon 14:30            # Was interrupted at 14:30, resuming now
+tatl offon 14:30..15:00     # Capture break period
 
-# Break capture (stop and resume)
-tatl offon 14:30              # Interrupted at 14:30, resume now
-tatl offon 14:30..15:00       # 30 min break
-
-# Add historical session
-tatl onoff 09:00..12:00       # Add session for queue[0]
-tatl onoff 09:00..12:00 10    # Add session for task 10
-
-# Insert session into existing time (splits overlapping sessions)
-tatl onoff 14:00..15:00 5 -y  # Insert meeting for task 5
-
-# Modify history (remove time from sessions)
-tatl offon 14:30..15:00 -y    # Remove this interval from overlapping sessions
+# Historical sessions
+tatl onoff 09:00..12:00     # Add session for queue[0]
+tatl onoff 09:00..12:00 5   # Add session for task 5
 ```
 
-### Task Queue
+### Queue Management
 
 ```bash
-# View queue
-tatl list
+tatl list                   # View queue
+tatl enqueue 5              # Add task to queue
+tatl enqueue 1,3,5          # Add multiple tasks
+tatl dequeue                # Remove queue[0]
+tatl dequeue 5              # Remove specific task
+tatl dequeue --all          # Clear entire queue
+```
 
-# Add to queue
-tatl enqueue 10
-tatl enqueue 1,3,5    # Multiple tasks
+### Projects
 
-# Remove from queue
-tatl dequeue          # Remove queue[0]
-tatl dequeue 5        # Remove specific task
+```bash
+tatl projects add work
+tatl projects add work.email        # Nested project
+tatl projects list
+tatl projects rename old new
+tatl projects archive old-project
 ```
 
 ### Sessions
 
 ```bash
-# List all sessions
-tatl sessions list
-
-# List sessions with filter
-tatl sessions list project:work
-
-# Modify session times
-tatl sessions modify 5 start:09:00 end:17:00
-
-# Delete a session
-tatl sessions delete 5 -y
-```
-
-### Recurrence
-
-```bash
-# Generate recurring task instances
-tatl recur run
-tatl recur run --until +30d
-
-# Recurrence rules
-tatl add Daily standup recur:daily template:meeting
-tatl add Weekly review recur:weekly byweekday:mon
-tatl add Monthly report recur:monthly bymonthday:1
+tatl sessions list                  # All sessions
+tatl sessions list project:work     # With filter
+tatl sessions modify 5 start:09:00  # Adjust times
+tatl sessions delete 5 -y           # Delete session
 ```
 
 ## Filter Syntax
-
-Filters support AND, OR, and NOT operations:
 
 ```bash
 # AND (implicit)
@@ -238,18 +258,44 @@ tatl list +urgent or +important
 # NOT
 tatl list not +waiting
 
-# Complex filters
-tatl list project:work +urgent or project:home +important
-tatl list status:pending not +waiting
+# Complex
+tatl list project:work status:pending not +blocked
+
+# Kanban status
+tatl list kanban:LIVE
+tatl list kanban:queued
 ```
 
 ## Configuration
 
-Create `~/.tatl/rc` to customize behavior:
+TATL stores data in `~/.tatl/`:
 
 ```
-data.location=/custom/path/to/tasks.db
+~/.tatl/
+├── ledger.db    # SQLite database (all data)
+└── rc           # Configuration file (optional)
 ```
+
+### Configuration File
+
+Create `~/.tatl/rc` to customize:
+
+```
+# Custom database location
+data.location=/path/to/my/tasks.db
+```
+
+## Database
+
+All data is stored in a single SQLite database (`~/.tatl/ledger.db`):
+
+- **Tasks**: Core task data and metadata
+- **Sessions**: Time tracking entries  
+- **Events**: Immutable audit log of all changes
+- **Projects**: Project hierarchy
+- **Annotations**: Timestamped notes
+
+The database is created automatically on first use and migrations are applied automatically on upgrade.
 
 ## Development
 
@@ -257,66 +303,42 @@ data.location=/custom/path/to/tasks.db
 # Build
 cargo build
 
-# Run tests
+# Test
 cargo test
 
 # Run with debug output
-RUST_LOG=debug cargo run -- <command>
+RUST_LOG=debug cargo run -- list
 
-# Format code
+# Format and lint
 cargo fmt
-
-# Lint
 cargo clippy
 ```
 
-## Design Documentation
+### Design Documentation
 
-See the `design/` directory for complete specifications:
+The `design/` directory contains implementation plans and decisions:
 
-- `Plan_01_Build_Team_Handoff_Package.md` - Complete design specification
-- `Review_01_Design_Issues_and_Recommendations.md` - Design review and resolved issues
-- `Design_Decisions.md` - Implementation decisions log
-
-## Command Reference
-
-See `docs/COMMAND_REFERENCE.md` for complete command documentation with examples.
+- `Plan_21_Rename_to_Tatl.md` - Migration from task-ninja to tatl
+- `Plan_22_CLI_Syntax_Review.md` - CLI design decisions
+- `Plan_23_Break_Capture_Workflow.md` - offon/onoff implementation
+- `Plan_24_Respawn_Model.md` - Respawn vs recurrence
 
 ## Troubleshooting
 
-### Common Issues
+### Common Errors
 
-**Error: Queue is empty**
-- Solution: Add a task to the queue first with `tatl enqueue <id>`
+| Error | Solution |
+|-------|----------|
+| "Queue is empty" | Add a task with `tatl enqueue <id>` |
+| "No session running" | Start with `tatl on` or `tatl on <id>` |
+| "Task not found" | Check ID with `tatl list` |
+| "Project not found" | Create with `tatl projects add <name>` |
 
-**Error: No session is currently running**
-- Solution: Start a session with `tatl on` or `tatl on <id>`
+### Database
 
-**Error: Task not found**
-- Solution: Verify task ID with `tatl list`
-
-**Error: Project not found**
-- Solution: Create project with `tatl projects add <name>`
-
-**Error: Filter parse error**
-- Solution: Check filter syntax, ensure proper spacing around `or` and `not`
-
-### Database Issues
-
-**Database location:**
-- Default: `~/.tatl/ledger.db`
-- Override: Create `~/.tatl/rc` with `data.location=/path/to/db`
-
-**Database corruption:**
-- Backup database regularly
-- If corruption occurs, restore from backup
-
-### Performance
-
-For large datasets (1000+ tasks):
-- Use specific filters to limit results
-- Indexes are automatically created for common queries
-- List operations should complete in < 1 second
+- **Location**: `~/.tatl/ledger.db`
+- **Override**: Set `data.location` in `~/.tatl/rc`
+- **Backup**: Copy the `.db` file periodically
 
 ## License
 

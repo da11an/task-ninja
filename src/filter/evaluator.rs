@@ -231,18 +231,12 @@ fn calculate_task_kanban(task: &Task, conn: &Connection) -> Result<String> {
         Some(1) => {
             if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
                 Ok("next".to_string())
-            } else if has_sessions {
-                Ok("working".to_string())
             } else {
                 Ok("queued".to_string())
             }
         }
         Some(_pos) => {
-            if has_sessions {
-                Ok("working".to_string())
-            } else {
-                Ok("queued".to_string())
-            }
+            Ok("queued".to_string())
         }
         None => {
             if has_sessions {

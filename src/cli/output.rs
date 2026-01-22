@@ -15,8 +15,7 @@ use std::cmp::Ordering;
 /// | --------- | --------- | ---------------- | ------------------------------ | ------------ |
 /// | proposed  | pending   | Not in stack     | Task id not in sessions list   | N/A          |
 /// | paused    | pending   | Not in stack     | Task id in sessions list       | N/A          |
-/// | queued    | pending   | Position > 0     | Task id not in sessions list   | N/A          |
-/// | working   | pending   | Position > 0     | Task id in sessions list       | N/A          |
+/// | queued    | pending   | Position > 0     | (any)                          | N/A          |
 /// | NEXT      | pending   | Position = 0     | N/A                            | Out          |
 /// | LIVE      | pending   | Position = 0     | (Task id in sessions list)     | In           |
 /// | done      | completed | (ineligible)     | N/A                            | N/A          |
@@ -46,19 +45,13 @@ pub fn calculate_kanban_status(
             // Position 1 = NEXT if position 0 is LIVE
             if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
                 "NEXT"
-            } else if has_sessions {
-                "working"
             } else {
                 "queued"
             }
         }
         Some(_pos) => {
             // Position > 1 = in stack but not at top
-            if has_sessions {
-                "working"
-            } else {
-                "queued"
-            }
+            "queued"
         }
         None => {
             // Not in stack
@@ -191,11 +184,10 @@ fn kanban_sort_order(kanban: &str) -> i64 {
         "proposed" => 0,
         "queued" => 1,
         "paused" => 2,
-        "working" => 3,
-        "next" => 4,
-        "live" => 5,
-        "done" => 6,
-        "quit" => 7,
+        "next" => 3,
+        "live" => 4,
+        "done" => 5,
+        "quit" => 6,
         _ => 99,
     }
 }

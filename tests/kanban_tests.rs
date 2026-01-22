@@ -274,7 +274,7 @@ fn test_kanban_status_paused() {
 }
 
 #[test]
-fn test_kanban_status_working() {
+fn test_kanban_status_queued_with_sessions() {
     let (temp_dir, _guard) = setup_test_env();
     
     // Create two tasks
@@ -293,12 +293,12 @@ fn test_kanban_status_working() {
     get_task_cmd(&temp_dir).args(&["on", "2"]).assert().success();
     get_task_cmd(&temp_dir).args(&["off"]).assert().success();
     
-    // First task should be "working" (position > 0, has sessions)
+    // First task should be "queued" (position > 0, regardless of sessions)
     let output = get_task_cmd(&temp_dir).args(&["list"]).assert().success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
     
-    assert!(stdout.lines().any(|l| l.contains("Working task") && l.contains("working")), 
-        "Working task should have 'working' kanban status");
+    assert!(stdout.lines().any(|l| l.contains("Working task") && l.contains("queued")), 
+        "Working task should have 'queued' kanban status");
     
     drop(temp_dir);
 }

@@ -105,7 +105,7 @@ pub enum FilterTerm {
     Scheduled(String),
     Wait(String),
     Waiting,
-    Kanban(String), // Kanban status filter (proposed, paused, queued, working, NEXT, LIVE, done)
+    Kanban(String), // Kanban status filter (proposed, paused, queued, NEXT, LIVE, done)
 }
 
 /// Parse a single filter term token

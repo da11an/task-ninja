@@ -205,6 +205,7 @@ fn status_sort_order(status: &str) -> i64 {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum TaskListColumn {
     Id,
+    Queue,
     Description,
     Kanban,
     Project,
@@ -232,6 +233,7 @@ struct TaskRow {
 fn parse_task_column(name: &str) -> Option<TaskListColumn> {
     match name.to_lowercase().as_str() {
         "id" => Some(TaskListColumn::Id),
+        "q" | "queue" => Some(TaskListColumn::Queue),
         "description" | "desc" => Some(TaskListColumn::Description),
         "kanban" => Some(TaskListColumn::Kanban),
         "project" | "proj" => Some(TaskListColumn::Project),
@@ -248,6 +250,7 @@ fn parse_task_column(name: &str) -> Option<TaskListColumn> {
 fn column_label(column: TaskListColumn) -> &'static str {
     match column {
         TaskListColumn::Id => "ID",
+        TaskListColumn::Queue => "Q",
         TaskListColumn::Description => "Description",
         TaskListColumn::Kanban => "Kanban",
         TaskListColumn::Project => "Project",
@@ -371,8 +374,16 @@ pub fn format_task_list_table(
             String::new()
         };
         
+        // Queue position (empty string if not in queue, "▶" if LIVE)
+        let queue_pos_str = match (stack_pos, kanban) {
+            (Some(0), "LIVE") => "▶".to_string(),
+            (Some(p), _) => p.to_string(),
+            (None, _) => String::new(),
+        };
+        
         let mut values = HashMap::new();
         values.insert(TaskListColumn::Id, task.id.map(|id| id.to_string()).unwrap_or_else(|| "?".to_string()));
+        values.insert(TaskListColumn::Queue, queue_pos_str.clone());
         values.insert(TaskListColumn::Description, task.description.clone());
         values.insert(TaskListColumn::Kanban, kanban.to_string());
         values.insert(TaskListColumn::Project, project.clone());
@@ -385,6 +396,8 @@ pub fn format_task_list_table(
         
         let mut sort_values = HashMap::new();
         sort_values.insert(TaskListColumn::Id, task.id.map(SortValue::Int));
+        // Queue position for sorting: tasks not in queue sort to the end (use i64::MAX)
+        sort_values.insert(TaskListColumn::Queue, Some(SortValue::Int(stack_pos.map(|p| p as i64).unwrap_or(i64::MAX))));
         sort_values.insert(TaskListColumn::Description, Some(SortValue::Str(task.description.clone())));
         sort_values.insert(TaskListColumn::Kanban, Some(SortValue::Int(kanban_sort_order(&kanban))));
         sort_values.insert(TaskListColumn::Project, Some(SortValue::Str(project)));
@@ -419,7 +432,7 @@ pub fn format_task_list_table(
             columns.push(column);
         }
     }
-    for column in [TaskListColumn::Id, TaskListColumn::Description] {
+    for column in [TaskListColumn::Id, TaskListColumn::Queue, TaskListColumn::Description] {
         if !columns.contains(&column) {
             columns.push(column);
         }
@@ -486,11 +499,17 @@ pub fn format_task_list_table(
         }
     }
     
-    // Separator line
-    let total_width: usize = columns.iter()
-        .map(|col| column_widths.get(col).copied().unwrap_or(4))
-        .sum::<usize>() + (columns.len().saturating_sub(1));
-    output.push_str(&format!("{}\n", "-".repeat(total_width)));
+    // Separator line with per-column underlines (gaps between columns)
+    for (idx, column) in columns.iter().enumerate() {
+        let width = *column_widths.get(column).unwrap_or(&4);
+        // Use Unicode box-drawing character for solid underline
+        let underline = "─".repeat(width);
+        if idx == columns.len() - 1 {
+            output.push_str(&format!("{}\n", underline));
+        } else {
+            output.push_str(&format!("{} ", underline));
+        }
+    }
     
     // Apply sorting (ensure grouped rows are contiguous by sorting on group columns first)
     // Parse sort specs with negation support

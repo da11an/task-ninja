@@ -25,49 +25,20 @@ fn get_task_cmd() -> Command {
     Command::cargo_bin("tatl").unwrap()
 }
 
-#[test]
-fn test_stack_next_while_clock_running_switches_live_task() {
-    let (_temp_dir, _guard) = setup_test_env();
-    
-    // Create two tasks
-    let mut cmd = get_task_cmd();
-    cmd.args(&["add", "task 1"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["add", "task 2"]).assert().success();
-    
-    // Enqueue both tasks
-    let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "1"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "2"]).assert().success();
-    
-    // Start clock on task 1 (clock[0])
-    let mut cmd = get_task_cmd();
-    cmd.args(&["on"]).assert().success();
-    
-    // Move to next task - should switch to task 2
-    let mut cmd = get_task_cmd();
-    cmd.args(&["next"]).assert().success();
-    
-    // Verify task 2 is now at top (check table format)
-    let mut cmd = get_task_cmd();
-    let output = cmd.args(&["list"]).assert().success();
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    // Task 2 should be at position 0
-    let pos_0_line = stdout.lines()
-        .find(|l| l.trim_start().starts_with("0"))
-        .unwrap();
-    assert!(pos_0_line.contains("2"), "Task 2 should be at position 0");
-    
-    // Clock out should work (session exists for task 2)
-    let mut cmd = get_task_cmd();
-    cmd.args(&["off"]).assert().success();
-}
+// Note: test_stack_next_while_clock_running_switches_live_task was removed
+// because the `next` command was removed per Plan_22_CLI_Syntax_Review.md.
+// Use `tatl on <task_id>` to switch to a different task instead.
+
+// Note: test_stack_pick_while_stopped_does_not_create_sessions was removed
+// because the `pick` command was removed per Plan_22_CLI_Syntax_Review.md.
+// Use `tatl on <task_id>` to switch to a different task instead.
+
+// Note: test_stack_next_with_clock_in_flag was removed
+// because the `next` command was removed per Plan_22_CLI_Syntax_Review.md.
+// Use `tatl on <task_id>` to switch to a different task instead.
 
 #[test]
-fn test_stack_pick_while_stopped_does_not_create_sessions() {
+fn test_queue_column_shows_position() {
     let (_temp_dir, _guard) = setup_test_env();
     
     // Create three tasks
@@ -80,39 +51,54 @@ fn test_stack_pick_while_stopped_does_not_create_sessions() {
     let mut cmd = get_task_cmd();
     cmd.args(&["add", "task 3"]).assert().success();
     
-    // Enqueue all tasks
+    // Enqueue tasks 1 and 3 (not 2)
     let mut cmd = get_task_cmd();
     cmd.args(&["enqueue", "1"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "2"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
     cmd.args(&["enqueue", "3"]).assert().success();
     
-    // Pick task at position 2 (task 3) - no session should be created
-    let mut cmd = get_task_cmd();
-    cmd.args(&["pick", "2"]).assert().success();
-    
-    // Verify stack order changed (task 3 should be at position 0)
+    // List all tasks and verify Q column values
     let mut cmd = get_task_cmd();
     let output = cmd.args(&["list"]).assert().success();
     let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let pos_0_line = stdout.lines()
-        .find(|l| l.trim_start().starts_with("0"))
-        .unwrap();
-    assert!(pos_0_line.contains("3"), "Task 3 should be at position 0");
     
-    // Verify no session is running
-    let mut cmd = get_task_cmd();
-    cmd.args(&["off"])
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("No session is currently running"));
+    // Check header has Q column
+    assert!(stdout.contains("Q"), "Output should have Q column header");
+    
+    // Parse each task line and check Q values
+    for line in stdout.lines() {
+        let parts: Vec<&str> = line.split_whitespace().collect();
+        if parts.is_empty() {
+            continue;
+        }
+        
+        match parts[0] {
+            "1" => {
+                // Task 1 should be at position 0
+                assert!(parts.len() > 1, "Task 1 line should have Q column");
+                assert_eq!(parts[1], "0", "Task 1 should be at queue position 0");
+            }
+            "2" => {
+                // Task 2 should NOT be in queue, so Q should be empty
+                // The next column after ID would be description, not a number
+                if parts.len() > 1 {
+                    assert!(parts[1].parse::<i32>().is_err(), 
+                        "Task 2 should not have queue position (got: {})", parts[1]);
+                }
+            }
+            "3" => {
+                // Task 3 should be at position 1
+                assert!(parts.len() > 1, "Task 3 line should have Q column");
+                assert_eq!(parts[1], "1", "Task 3 should be at queue position 1");
+            }
+            _ => {}
+        }
+    }
 }
 
 #[test]
-fn test_stack_next_with_clock_in_flag() {
+fn test_switch_task_with_on_command() {
     let (_temp_dir, _guard) = setup_test_env();
     
     // Create two tasks
@@ -122,22 +108,34 @@ fn test_stack_next_with_clock_in_flag() {
     let mut cmd = get_task_cmd();
     cmd.args(&["add", "task 2"]).assert().success();
     
-    // Enqueue both tasks
+    // Enqueue and start clock on task 1
     let mut cmd = get_task_cmd();
     cmd.args(&["enqueue", "1"]).assert().success();
     
     let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "2"]).assert().success();
-    
-    // Move to next task
-    let mut cmd = get_task_cmd();
-    cmd.args(&["next"]).assert().success();
-    
-    // Start clock on new clock[0]
-    let mut cmd = get_task_cmd();
     cmd.args(&["on"]).assert().success();
     
-    // Verify session is running
+    // Switch to task 2 using `on 2` (replaces old `pick` behavior)
+    let mut cmd = get_task_cmd();
+    cmd.args(&["on", "2"]).assert().success();
+    
+    // Verify task 2 is now at position 0 in queue
+    let mut cmd = get_task_cmd();
+    let output = cmd.args(&["list"]).assert().success();
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    
+    // Find task 2's line and verify Q=▶ (LIVE indicator)
+    let task_2_line = stdout.lines()
+        .find(|l| {
+            let parts: Vec<&str> = l.split_whitespace().collect();
+            parts.first() == Some(&"2")
+        })
+        .expect("Should find task 2");
+    let parts: Vec<&str> = task_2_line.split_whitespace().collect();
+    assert!(parts.len() > 1, "Line should have Q column");
+    assert_eq!(parts[1], "▶", "Task 2 should show ▶ (LIVE at position 0)");
+    
+    // Clock out should work
     let mut cmd = get_task_cmd();
     cmd.args(&["off"]).assert().success();
 }
@@ -173,48 +171,6 @@ fn test_stack_clear_with_clock_out_flag() {
         .stderr(predicate::str::contains("No session is currently running"));
 }
 
-#[test]
-fn test_stack_pick_while_clock_running_switches_task() {
-    let (_temp_dir, _guard) = setup_test_env();
-    
-    // Create three tasks
-    let mut cmd = get_task_cmd();
-    cmd.args(&["add", "task 1"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["add", "task 2"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["add", "task 3"]).assert().success();
-    
-    // Enqueue all tasks
-    let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "1"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "2"]).assert().success();
-    
-    let mut cmd = get_task_cmd();
-    cmd.args(&["enqueue", "3"]).assert().success();
-    
-    // Start clock on task 1
-    let mut cmd = get_task_cmd();
-    cmd.args(&["on"]).assert().success();
-    
-    // Pick task at position 2 (task 3) - should switch to task 3
-    let mut cmd = get_task_cmd();
-    cmd.args(&["pick", "2"]).assert().success();
-    
-    // Verify task 3 is at top (position 0)
-    let mut cmd = get_task_cmd();
-    let output = cmd.args(&["list"]).assert().success();
-    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
-    let pos_0_line = stdout.lines()
-        .find(|l| l.trim_start().starts_with("0"))
-        .unwrap();
-    assert!(pos_0_line.contains("3"), "Task 3 should be at position 0");
-    
-    // Clock out should work (session exists for task 3)
-    let mut cmd = get_task_cmd();
-    cmd.args(&["off"]).assert().success();
-}
+// Note: test_stack_pick_while_clock_running_switches_task was removed
+// because the `pick` command was removed per Plan_22_CLI_Syntax_Review.md.
+// Use `tatl on <task_id>` to switch to a different task instead.

@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use crate::db::DbConnection;
-use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo, ViewRepo};
+use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo, ViewRepo, ExternalRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_report};
 use crate::cli::output::{format_task_list_table, format_task_summary, TaskListOptions};
@@ -407,6 +407,53 @@ TARGET SYNTAX:
         #[command(subcommand)]
         subcommand: QueueCommands,
     },
+    /// Send task to external party for review/approval
+    #[command(long_about = "Send a task to an external party (colleague, supervisor, release window, etc.). The task will be removed from the queue and marked as 'external' in kanban view.
+
+The task remains visible but is no longer in your active queue. When the external party returns it, use 'collect' to bring it back under your control.
+
+EXAMPLES:
+  tatl send 10 colleague \"Please review this PR\"
+  tatl send 5 Release_5.2
+  tatl send 3 supervisor \"Needs approval\"")]
+    Send {
+        /// Task ID
+        task_id: String,
+        /// Recipient name (e.g., \"colleague\", \"supervisor\", \"Release_5.2\", \"Customer\")
+        recipient: String,
+        /// Optional request/note about what was requested
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        request: Vec<String>,
+    },
+    /// Collect task back from external party
+    #[command(long_about = "Collect a task that was sent to an external party. Marks all externals for the task as returned. The task returns to normal kanban flow (proposed or stalled, depending on whether it has sessions).
+
+After collecting, you can:
+  - Re-queue it: tatl enqueue <task_id>
+  - Finish it: tatl finish <task_id>
+  - Close it: tatl close <task_id>
+
+EXAMPLES:
+  tatl collect 10")]
+    Collect {
+        /// Task ID
+        task_id: String,
+    },
+    /// List external tasks
+    #[command(long_about = "List all tasks that are currently with external parties. Shows task ID, description, recipient, and when it was sent.
+
+FILTERING:
+  Filter by recipient: tatl externals colleague
+  Filter by task: tatl externals 10
+
+EXAMPLES:
+  tatl externals
+  tatl externals colleague
+  tatl externals Release_5.2")]
+    Externals {
+        /// Optional filter: recipient name or task ID
+        filter: Option<String>,
+    },
     /// Sessions management commands
     #[command(long_about = "Manage work sessions. Sessions track time spent on tasks.")]
     Sessions {
@@ -744,7 +791,16 @@ fn handle_command(cli: Cli) -> Result<()> {
                     handle_queue_sort(&field)
                 }
             }
-        }
+        },
+        Commands::Send { task_id, recipient, request } => {
+            handle_send(task_id, recipient, request)
+        },
+        Commands::Collect { task_id } => {
+            handle_collect(task_id)
+        },
+        Commands::Externals { filter } => {
+            handle_externals(filter)
+        },
         Commands::Sessions { subcommand, task } => {
             match subcommand {
                 SessionsCommands::List { filter, json } => {
@@ -1054,8 +1110,6 @@ fn handle_projects_report(conn: &Connection) -> Result<()> {
     
     // Print report
     let pw = 25; // project width
-    println!("Projects Report");
-    println!("{}", "═".repeat(pw + 50));
     println!("{:<pw$} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}", 
         "Project", "Proposed", "Queued", "Paused", "NEXT", "LIVE", "Done", "Total", pw = pw);
     println!("{} {} {} {} {} {} {} {}", 
@@ -1206,6 +1260,118 @@ fn handle_queue_sort(field: &str) -> Result<()> {
     
     let direction = if descending { "descending" } else { "ascending" };
     println!("Queue sorted by {} ({})", sort_field, direction);
+    
+    Ok(())
+}
+
+fn handle_send(task_id_str: String, recipient: String, request: Vec<String>) -> Result<()> {
+    let conn = DbConnection::connect()?;
+    let task_id = validate_task_id(&task_id_str)
+        .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
+    
+    // Verify task exists
+    let task = TaskRepo::get_by_id(&conn, task_id)?
+        .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
+    
+    // Check if task is already sent to this recipient
+    let existing_externals = ExternalRepo::get_active_for_task(&conn, task_id)?;
+    if existing_externals.iter().any(|e| e.recipient == recipient) {
+        return Err(anyhow::anyhow!("Task {} is already sent to {}", task_id, recipient));
+    }
+    
+    // Remove from queue if present
+    let stack = StackRepo::get_or_create_default(&conn)?;
+    if let Some(stack_id) = stack.id {
+        let items = StackRepo::get_items(&conn, stack_id)?;
+        if items.iter().any(|item| item.task_id == task_id) {
+            StackRepo::remove_task(&conn, stack_id, task_id)?;
+        }
+    }
+    
+    // Create external record
+    let request_str = if request.is_empty() {
+        None
+    } else {
+        Some(request.join(" "))
+    };
+    
+    ExternalRepo::create(&conn, task_id, recipient.clone(), request_str)?;
+    
+    println!("Sent task {} to {}: {}", task_id, recipient, task.description);
+    Ok(())
+}
+
+fn handle_collect(task_id_str: String) -> Result<()> {
+    let conn = DbConnection::connect()?;
+    let task_id = validate_task_id(&task_id_str)
+        .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
+    
+    // Verify task exists
+    let task = TaskRepo::get_by_id(&conn, task_id)?
+        .ok_or_else(|| anyhow::anyhow!("Task {} not found", task_id))?;
+    
+    // Get active externals
+    let externals = ExternalRepo::get_active_for_task(&conn, task_id)?;
+    if externals.is_empty() {
+        return Err(anyhow::anyhow!("Task {} has no active externals", task_id));
+    }
+    
+    // Mark all as returned
+    ExternalRepo::mark_all_returned_for_task(&conn, task_id)?;
+    
+    println!("Collected task {}: {}", task_id, task.description);
+    println!("  Returned from: {}", externals.iter().map(|e| e.recipient.as_str()).collect::<Vec<_>>().join(", "));
+    Ok(())
+}
+
+fn handle_externals(filter: Option<String>) -> Result<()> {
+    let conn = DbConnection::connect()?;
+    
+    let externals = if let Some(filter_str) = filter {
+        // Try parsing as task ID first
+        if let Ok(task_id) = validate_task_id(&filter_str) {
+            ExternalRepo::get_active_for_task(&conn, task_id)?
+        } else {
+            // Treat as recipient name
+            ExternalRepo::get_by_recipient(&conn, &filter_str)?
+        }
+    } else {
+        ExternalRepo::get_all_active(&conn)?
+    };
+    
+    if externals.is_empty() {
+        println!("No external tasks found.");
+        return Ok(());
+    }
+    
+    // Group by task_id and fetch task details
+    use std::collections::HashMap;
+    let mut task_externals: HashMap<i64, Vec<&crate::models::External>> = HashMap::new();
+    for external in &externals {
+        task_externals.entry(external.task_id).or_insert_with(Vec::new).push(external);
+    }
+    
+    println!("{:<6} {:<40} {:<20} {:<30}", "ID", "Description", "Recipient", "Sent");
+    println!("{} {} {} {}", "─".repeat(6), "─".repeat(40), "─".repeat(20), "─".repeat(30));
+    
+    for (task_id, externals_list) in task_externals {
+        if let Some(task) = TaskRepo::get_by_id(&conn, task_id)? {
+            let desc = if task.description.len() > 40 {
+                format!("{}…", &task.description[..39])
+            } else {
+                task.description.clone()
+            };
+            
+            for (idx, external) in externals_list.iter().enumerate() {
+                let sent_date = crate::cli::output::format_date(external.sent_ts);
+                if idx == 0 {
+                    println!("{:<6} {:<40} {:<20} {:<30}", task_id, desc, external.recipient, sent_date);
+                } else {
+                    println!("{:<6} {:<40} {:<20} {:<30}", "", "", external.recipient, sent_date);
+                }
+            }
+        }
+    }
     
     Ok(())
 }

@@ -21,7 +21,7 @@
 //! - `kanban:<status>` - Derived: matches tasks by kanban status (proposed, paused, queued, working, NEXT, LIVE, done)
 
 use crate::models::{Task, TaskStatus};
-use crate::repo::{TaskRepo, SessionRepo, StackRepo};
+use crate::repo::{TaskRepo, SessionRepo, StackRepo, ExternalRepo};
 use crate::filter::parser::FilterTerm;
 use rusqlite::Connection;
 use anyhow::Result;
@@ -70,8 +70,10 @@ impl FilterTerm {
             FilterTerm::Id(id) => {
                 Ok(task.id == Some(*id))
             }
-            FilterTerm::Status(status) => {
-                Ok(task.status.as_str() == status)
+            FilterTerm::Status(statuses) => {
+                // Multi-value status filter: status:pending,closed matches if task status is any of the values
+                let task_status = task.status.as_str();
+                Ok(statuses.iter().any(|s| task_status == s.as_str()))
             }
             FilterTerm::Project(project_name) => {
                 // Nested project prefix matching:
@@ -187,11 +189,11 @@ impl FilterTerm {
             FilterTerm::Waiting => {
                 Ok(task.is_waiting())
             }
-            FilterTerm::Kanban(status) => {
-                // Calculate kanban status for the task
+            FilterTerm::Kanban(statuses) => {
+                // Multi-value kanban filter: kanban:queued,stalled matches if task kanban is any of the values
                 let task_kanban = calculate_task_kanban(task, conn)?;
-                // Case-insensitive comparison
-                Ok(task_kanban.to_lowercase() == *status)
+                let task_kanban_lower = task_kanban.to_lowercase();
+                Ok(statuses.iter().any(|s| task_kanban_lower == s.to_lowercase()))
             }
             FilterTerm::Desc(pattern) => {
                 // Case-insensitive substring match on description
@@ -199,12 +201,19 @@ impl FilterTerm {
                 let pattern_lower = pattern.to_lowercase();
                 Ok(desc_lower.contains(&pattern_lower))
             }
+            FilterTerm::External(recipient) => {
+                // Check if task has active externals matching the recipient
+                let task_id = task.id.unwrap_or(0);
+                let externals = ExternalRepo::get_active_for_task(conn, task_id)?;
+                Ok(externals.iter().any(|e| e.recipient == *recipient))
+            }
         }
     }
 }
 
 /// Calculate the kanban status for a task
 /// This is a helper function for filter evaluation
+/// Matches the logic in calculate_kanban_status() in output.rs
 fn calculate_task_kanban(task: &Task, conn: &Connection) -> Result<String> {
     // Completed/closed tasks are "done"
     if task.status == TaskStatus::Completed || task.status == TaskStatus::Closed {
@@ -213,42 +222,32 @@ fn calculate_task_kanban(task: &Task, conn: &Connection) -> Result<String> {
     
     let task_id = task.id.unwrap_or(0);
     
+    // Check for externals
+    let has_externals = ExternalRepo::has_active_externals(conn, task_id)?;
+    if has_externals {
+        return Ok("external".to_string());
+    }
+    
     // Get stack position
     let stack = StackRepo::get_or_create_default(conn)?;
     let items = StackRepo::get_items(conn, stack.id.unwrap())?;
     let stack_position = items.iter().position(|item| item.task_id == task_id);
-    let stack_top_task_id = items.first().map(|item| item.task_id);
     
     // Check if task has sessions
     let all_sessions = SessionRepo::list_all(conn)?;
     let has_sessions = all_sessions.iter().any(|s| s.task_id == task_id);
     
-    // Check if clock is running
-    let open_session_task_id = SessionRepo::get_open(conn)?.map(|s| s.task_id);
-    
     match stack_position {
-        Some(0) => {
-            if open_session_task_id == task.id {
-                Ok("live".to_string())
-            } else {
-                Ok("next".to_string())
-            }
-        }
-        Some(1) => {
-            if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
-                Ok("next".to_string())
-            } else {
-                Ok("queued".to_string())
-            }
-        }
         Some(_pos) => {
+            // In stack (any position) = queued
             Ok("queued".to_string())
         }
         None => {
+            // Not in stack
             if has_sessions {
-                Ok("paused".to_string())
+                Ok("stalled".to_string())  // Has sessions but not in queue
             } else {
-                Ok("proposed".to_string())
+                Ok("proposed".to_string())  // New task, not started
             }
         }
     }

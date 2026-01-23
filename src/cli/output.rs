@@ -1,7 +1,7 @@
 // Output formatting utilities
 
 use crate::models::{Task, TaskStatus};
-use crate::repo::{ProjectRepo, SessionRepo, StackRepo, TaskRepo};
+use crate::repo::{ProjectRepo, SessionRepo, StackRepo, TaskRepo, ExternalRepo};
 use crate::cli::priority::calculate_priority;
 use chrono::Local;
 use rusqlite::Connection;
@@ -11,54 +11,47 @@ use std::cmp::Ordering;
 
 /// Kanban status values (derived from task state)
 /// 
-/// | Kanban    | Status    | Clock stack      | Sessions list                  | Clock status |
+/// | Kanban    | Status    | Clock stack      | Sessions list                  | External     |
 /// | --------- | --------- | ---------------- | ------------------------------ | ------------ |
-/// | proposed  | pending   | Not in stack     | Task id not in sessions list   | N/A          |
-/// | paused    | pending   | Not in stack     | Task id in sessions list       | N/A          |
-/// | queued    | pending   | Position > 0     | (any)                          | N/A          |
-/// | NEXT      | pending   | Position = 0     | N/A                            | Out          |
-/// | LIVE      | pending   | Position = 0     | (Task id in sessions list)     | In           |
+/// | proposed  | pending   | Not in stack     | Task id not in sessions list   | No externals |
+/// | stalled   | pending   | Not in stack     | Task id in sessions list       | No externals |
+/// | queued    | pending   | In stack (any)   | (any)                          | No externals |
+/// | external  | pending   | (any)            | (any)                          | Has externals|
 /// | done      | completed | (ineligible)     | N/A                            | N/A          |
+/// | done      | closed    | (ineligible)     | N/A                            | N/A          |
+/// 
+/// Note: Q column shows exact queue position (0, 1, 2, etc. or E for external)
 pub fn calculate_kanban_status(
     task: &Task,
     stack_position: Option<usize>,
     has_sessions: bool,
-    open_session_task_id: Option<i64>,
-    stack_top_task_id: Option<i64>,
+    _open_session_task_id: Option<i64>,  // Not used after removing NEXT/LIVE, kept for API compatibility
+    _stack_top_task_id: Option<i64>,      // Not used after removing NEXT/LIVE, kept for API compatibility
+    has_externals: bool,
 ) -> &'static str {
     // Completed/closed tasks are "done"
     if task.status == TaskStatus::Completed || task.status == TaskStatus::Closed {
         return "done";
     }
     
+    // External tasks (sent to external party)
+    if has_externals {
+        return "external";
+    }
+    
     // At this point, task is pending (or other non-terminal status)
     match stack_position {
-        Some(0) => {
-            // Position 0 = top of stack
-            if open_session_task_id == task.id {
-                "LIVE"
-            } else {
-                "NEXT"
-            }
-        }
-        Some(1) => {
-            // Position 1 = NEXT if position 0 is LIVE
-            if open_session_task_id.is_some() && stack_top_task_id == open_session_task_id {
-                "NEXT"
-            } else {
-                "queued"
-            }
-        }
         Some(_pos) => {
-            // Position > 1 = in stack but not at top
+            // In stack (any position) = queued
+            // Q column shows exact position
             "queued"
         }
         None => {
             // Not in stack
             if has_sessions {
-                "paused"
+                "stalled"  // Has sessions but not in queue (needs attention)
             } else {
-                "proposed"
+                "proposed"  // New task, not started
             }
         }
     }
@@ -81,6 +74,13 @@ fn get_stack_positions(conn: &Connection) -> Result<HashMap<i64, usize>> {
 fn get_tasks_with_sessions(conn: &Connection) -> Result<HashSet<i64>> {
     let all_sessions = SessionRepo::list_all(conn)?;
     let task_ids: HashSet<i64> = all_sessions.iter().map(|s| s.task_id).collect();
+    Ok(task_ids)
+}
+
+/// Get set of task IDs that have active externals
+fn get_tasks_with_externals(conn: &Connection) -> Result<HashSet<i64>> {
+    let all_externals = ExternalRepo::get_all_active(conn)?;
+    let task_ids: HashSet<i64> = all_externals.iter().map(|e| e.task_id).collect();
     Ok(task_ids)
 }
 
@@ -179,15 +179,19 @@ fn parse_sort_spec(spec: &str) -> SortSpec {
 }
 
 /// Ordinal value for kanban status (workflow progression)
+/// Order: proposed → stalled → queued → external → done
 fn kanban_sort_order(kanban: &str) -> i64 {
     match kanban.to_lowercase().as_str() {
         "proposed" => 0,
-        "queued" => 1,
-        "paused" => 2,
-        "next" => 3,
-        "live" => 4,
-        "done" => 5,
-        "quit" => 6,
+        "stalled" => 1,
+        "queued" => 2,
+        "external" => 3,
+        "done" => 4,
+        // Legacy support (for migration period)
+        "paused" => 1,  // Maps to stalled
+        "next" => 2,   // Maps to queued
+        "live" => 2,   // Maps to queued
+        "quit" => 4,   // Maps to done
         _ => 99,
     }
 }
@@ -303,6 +307,7 @@ pub fn format_task_list_table(
     let stack_items = StackRepo::get_items(conn, stack.id.unwrap())?;
     let stack_top_task_id = stack_items.first().map(|item| item.task_id);
     let tasks_with_sessions = get_tasks_with_sessions(conn)?;
+    let tasks_with_externals = get_tasks_with_externals(conn)?;
     let open_session_task_id = SessionRepo::get_open(conn)?.map(|s| s.task_id);
     
     let mut rows: Vec<TaskRow> = Vec::new();
@@ -310,12 +315,14 @@ pub fn format_task_list_table(
         let task_id = task.id.unwrap_or(0);
         let stack_pos = stack_positions.get(&task_id).copied();
         let has_sessions = tasks_with_sessions.contains(&task_id);
+        let has_externals = tasks_with_externals.contains(&task_id);
         let kanban = calculate_kanban_status(
             task,
             stack_pos,
             has_sessions,
             open_session_task_id,
             stack_top_task_id,
+            has_externals,
         );
         
         let project = if let Some(project_id) = task.project_id {
@@ -374,11 +381,15 @@ pub fn format_task_list_table(
             String::new()
         };
         
-        // Queue position (empty string if not in queue, "▶" if LIVE)
-        let queue_pos_str = match (stack_pos, kanban) {
-            (Some(0), "LIVE") => "▶".to_string(),
-            (Some(p), _) => p.to_string(),
-            (None, _) => String::new(),
+        // Queue position (empty string if not in queue, "▶" if at position 0 with active session, "E" if external)
+        let queue_pos_str = if kanban == "external" {
+            "E".to_string()
+        } else if stack_pos == Some(0) && open_session_task_id == task.id {
+            "▶".to_string()
+        } else if let Some(p) = stack_pos {
+            p.to_string()
+        } else {
+            String::new()
         };
         
         let mut values = HashMap::new();

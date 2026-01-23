@@ -6,6 +6,7 @@ pub mod annotation;
 pub mod event;
 pub mod template;
 pub mod view;
+pub mod external;
 
 pub use project::*;
 pub use task::*;
@@ -15,3 +16,4 @@ pub use annotation::*;
 pub use event::*;
 pub use template::*;
 pub use view::*;
+pub use external::*;

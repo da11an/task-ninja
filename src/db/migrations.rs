@@ -2,7 +2,7 @@ use rusqlite::{Connection, Result};
 use std::collections::HashMap;
 
 /// Current database schema version
-const CURRENT_VERSION: u32 = 5;
+const CURRENT_VERSION: u32 = 6;
 
 /// Migration system for managing database schema versions
 pub struct MigrationManager;
@@ -87,6 +87,7 @@ fn get_migrations() -> HashMap<u32, fn(&rusqlite::Transaction) -> Result<(), rus
     migrations.insert(3, migration_v3);
     migrations.insert(4, migration_v4);
     migrations.insert(5, migration_v5);
+    migrations.insert(6, migration_v6);
     migrations
 }
 
@@ -457,6 +458,41 @@ fn migration_v5(tx: &rusqlite::Transaction) -> Result<(), rusqlite::Error> {
     tx.execute("CREATE INDEX idx_tasks_wait_ts ON tasks(wait_ts)", [])?;
     
     // Note: PRAGMA foreign_keys=ON is restored by apply_migration after commit
+    Ok(())
+}
+
+/// Migration v6: Add externals table for external workflow tracking
+fn migration_v6(tx: &rusqlite::Transaction) -> Result<(), rusqlite::Error> {
+    tx.execute(
+        "CREATE TABLE externals (
+            id INTEGER PRIMARY KEY,
+            task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+            recipient TEXT NOT NULL,
+            request TEXT NULL,
+            sent_ts INTEGER NOT NULL,
+            returned_ts INTEGER NULL,
+            created_ts INTEGER NOT NULL,
+            modified_ts INTEGER NOT NULL,
+            UNIQUE(task_id, recipient)
+        )",
+        [],
+    )?;
+    
+    tx.execute(
+        "CREATE INDEX idx_externals_task ON externals(task_id)",
+        [],
+    )?;
+    
+    tx.execute(
+        "CREATE INDEX idx_externals_recipient ON externals(recipient)",
+        [],
+    )?;
+    
+    tx.execute(
+        "CREATE INDEX idx_externals_returned ON externals(returned_ts) WHERE returned_ts IS NULL",
+        [],
+    )?;
+    
     Ok(())
 }
 

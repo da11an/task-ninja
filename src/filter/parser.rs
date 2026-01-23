@@ -98,15 +98,16 @@ enum FilterToken {
 #[derive(Debug, Clone)]
 pub enum FilterTerm {
     Id(i64),
-    Status(String),
+    Status(Vec<String>), // Status filter (pending, completed, closed) - supports comma-separated values
     Project(String),
     Tag(String, bool), // (tag, is_positive)
     Due(String),
     Scheduled(String),
     Wait(String),
     Waiting,
-    Kanban(String), // Kanban status filter (proposed, paused, queued, NEXT, LIVE, done)
+    Kanban(Vec<String>), // Kanban status filter (proposed, stalled, queued, external, done) - supports comma-separated values
     Desc(String), // Description substring search (case-insensitive)
+    External(String), // External recipient filter
 }
 
 /// Parse a single filter term token
@@ -127,13 +128,26 @@ fn parse_filter_term(token: &str) -> Result<Option<FilterTerm>, String> {
     if let Some((key, value)) = token.split_once(':') {
         let resolved_key = resolve_filter_key(key)?;
         return match resolved_key.as_str() {
-            "status" => Ok(Some(FilterTerm::Status(value.to_string()))),
+            "status" => {
+                // Support comma-separated values: status:pending,closed
+                let values: Vec<String> = value.split(',')
+                    .map(|v| v.trim().to_lowercase())
+                    .collect();
+                Ok(Some(FilterTerm::Status(values)))
+            },
             "project" => Ok(Some(FilterTerm::Project(value.to_string()))),
             "due" => Ok(Some(FilterTerm::Due(value.to_string()))),
             "scheduled" => Ok(Some(FilterTerm::Scheduled(value.to_string()))),
             "wait" => Ok(Some(FilterTerm::Wait(value.to_string()))),
-            "kanban" => Ok(Some(FilterTerm::Kanban(value.to_lowercase()))),
+            "kanban" => {
+                // Support comma-separated values: kanban:queued,stalled
+                let values: Vec<String> = value.split(',')
+                    .map(|v| v.trim().to_lowercase())
+                    .collect();
+                Ok(Some(FilterTerm::Kanban(values)))
+            },
             "desc" | "description" => Ok(Some(FilterTerm::Desc(value.to_string()))),
+            "external" => Ok(Some(FilterTerm::External(value.to_string()))),
             "id" => {
                 if let Ok(id) = value.parse::<i64>() {
                     Ok(Some(FilterTerm::Id(id)))

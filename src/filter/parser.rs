@@ -106,6 +106,7 @@ pub enum FilterTerm {
     Wait(String),
     Waiting,
     Kanban(String), // Kanban status filter (proposed, paused, queued, NEXT, LIVE, done)
+    Desc(String), // Description substring search (case-insensitive)
 }
 
 /// Parse a single filter term token
@@ -132,6 +133,7 @@ fn parse_filter_term(token: &str) -> Result<Option<FilterTerm>, String> {
             "scheduled" => Ok(Some(FilterTerm::Scheduled(value.to_string()))),
             "wait" => Ok(Some(FilterTerm::Wait(value.to_string()))),
             "kanban" => Ok(Some(FilterTerm::Kanban(value.to_lowercase()))),
+            "desc" | "description" => Ok(Some(FilterTerm::Desc(value.to_string()))),
             "id" => {
                 if let Ok(id) = value.parse::<i64>() {
                     Ok(Some(FilterTerm::Id(id)))
@@ -161,7 +163,14 @@ fn parse_filter_term(token: &str) -> Result<Option<FilterTerm>, String> {
 
 fn resolve_filter_key(key: &str) -> Result<String, String> {
     let key_lower = key.to_lowercase();
-    let known = ["id", "status", "project", "due", "scheduled", "wait", "kanban"];
+    let known = ["id", "status", "project", "due", "scheduled", "wait", "kanban", "desc", "description"];
+    
+    // Check for exact match first
+    if known.iter().any(|&k| k == key_lower) {
+        return Ok(key_lower);
+    }
+    
+    // Then check for prefix matches
     let matches: Vec<&str> = known.iter().copied()
         .filter(|candidate| candidate.starts_with(&key_lower))
         .collect();

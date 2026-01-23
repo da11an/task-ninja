@@ -7,8 +7,8 @@ Complete reference for all Tatl commands with examples and usage patterns.
 - [Task Commands](#task-commands)
 - [Project Commands](#project-commands)
 - [Timing Commands](#timing-commands)
+- [Queue Commands](#queue-commands)
 - [Session Commands](#session-commands)
-- [Status Command](#status-command)
 - [Respawning Tasks](#respawning-tasks)
 - [Filter Syntax](#filter-syntax)
 - [Date Expressions](#date-expressions)
@@ -26,6 +26,7 @@ Add a new task with optional attributes.
 
 **Options:**
 - `--on` - Automatically start timing after creating task (pushes to queue[0] and starts timing)
+- `--on=<time>` - Same as `--on`, but start session at the specified time (e.g., `--on=14:00`)
 - `--onoff <start>..<end>` - Create task and add historical session for the specified interval
 - `--enqueue` - Automatically enqueue task to queue after creating (adds to end, does not start timing)
 - `-y` - Auto-confirm prompts (create new projects, modify overlapping sessions)
@@ -63,6 +64,10 @@ tatl add Customer call uda.client:acme uda.priority:high
 # Task with --on (automatically starts timing)
 tatl add --on Start working on feature
 tatl add --on "Fix urgent bug" project:work +urgent
+
+# Task with --on=<time> (start timing at earlier time)
+tatl add --on=14:00 "Meeting started at 2pm" project:meetings
+tatl add --on=09:30 "Forgot to start timer" project:work
 
 # Task with --enqueue (adds to queue without starting timing)
 tatl add --enqueue "Review documentation" project:docs
@@ -333,6 +338,31 @@ Archive a project.
 tatl projects archive old-project
 ```
 
+### `tatl projects report`
+
+Display task counts by project and kanban status.
+
+Shows a table with columns for each kanban status (Proposed, Queued, Paused, NEXT, LIVE, Done) and rows for each project.
+
+**Examples:**
+```bash
+# Show project report
+tatl projects report
+```
+
+**Output:**
+```
+Projects Report
+═══════════════════════════════════════════════════════════════════
+Project                   Proposed   Queued   Paused   NEXT   LIVE   Done  Total
+───────────────────────── ──────── ──────── ──────── ────── ────── ────── ──────
+work                            3        2        1      1      0      5     12
+work.email                      1        0        0      0      0      2      3
+personal                        2        1        0      0      1      3      7
+───────────────────────── ──────── ──────── ──────── ────── ────── ────── ──────
+TOTAL                           6        3        1      1      1     10     22
+```
+
 ---
 
 ## Timing Commands
@@ -475,6 +505,34 @@ tatl dequeue
 tatl dequeue 5
 ```
 
+### `tatl queue sort <field>`
+
+Sort the queue by a specified field.
+
+**Arguments:**
+- `<field>` - Field to sort by: `priority`, `due`, `scheduled`, `alloc`, `id`, `description`
+- Prefix with `-` for descending order (e.g., `-priority`, `-due`)
+
+**Behavior:**
+- Ascending sorts put smallest values first (earlier dates, lower priorities)
+- Descending sorts put largest values first (later dates, higher priorities)
+- Tasks with missing values for the sort field are placed at the end
+
+**Examples:**
+```bash
+# Sort by due date (earliest first)
+tatl queue sort due
+
+# Sort by priority (highest first, descending)
+tatl queue sort -priority
+
+# Sort by allocation time (shortest first)
+tatl queue sort alloc
+
+# Sort by scheduled date
+tatl queue sort scheduled
+```
+
 ### `tatl list`
 
 Display the current task queue with full task details.
@@ -571,13 +629,20 @@ tatl sessions show
 tatl sessions show --tatl 10
 ```
 
-### `tatl sessions modify <session_id> [start:<expr>] [end:<expr>] [--yes] [--force]`
+### `tatl sessions modify <session_id> [<start>..<end>] [--yes] [--force]`
 
-Modify session start and/or end times.
+Modify session start and/or end times using interval syntax.
 
-**Syntax:** CLAP-native: `tatl sessions modify <session_id> [start:<expr>] [end:<expr>]`
+**Syntax:** 
+- Interval syntax: `tatl sessions modify <session_id> <start>..<end>`
+- Legacy syntax: `tatl sessions modify <session_id> start:<expr> end:<expr>`
 
-**Fields:**
+**Interval Syntax:**
+- `<start>..<end>` - Set both start and end times
+- `<start>..` - Set start time only (keep current end)
+- `..<end>` - Set end time only (keep current start)
+
+**Legacy Fields:**
 - `start:<expr>` - Modify start time (date expression)
 - `end:<expr>` - Modify end time (date expression)
 - `end:none` - Clear end time (make session open, only for closed sessions)
@@ -599,26 +664,27 @@ Modify session start and/or end times.
 
 **Examples:**
 ```bash
-# Modify start time
-tatl sessions 5 modify start:09:00
+# Using interval syntax (recommended)
+tatl sessions modify 5 09:00..17:00      # Set both start and end
+tatl sessions modify 5 09:00..           # Set start time only
+tatl sessions modify 5 ..17:00           # Set end time only
 
-# Modify end time
-tatl sessions 5 modify end:17:00
-
-# Modify both
-tatl sessions 5 modify start:09:00 end:17:00
+# Using legacy syntax
+tatl sessions modify 5 start:09:00       # Set start time
+tatl sessions modify 5 end:17:00         # Set end time
+tatl sessions modify 5 start:09:00 end:17:00  # Set both
 
 # Close an open session
-tatl sessions 5 modify end:now
+tatl sessions modify 5 end:now
 
 # Make a closed session open (clear end time)
-tatl sessions 5 modify end:none
+tatl sessions modify 5 end:none
 
 # Modify with confirmation bypass
-tatl sessions 5 modify start:09:00 --yes
+tatl sessions modify 5 09:00..17:00 --yes
 
 # Force modification despite conflicts
-tatl sessions 5 modify start:10:00 --force
+tatl sessions modify 5 10:00..11:00 --force
 ```
 
 **Conflict Example:**
@@ -668,116 +734,46 @@ Delete session 5?
 Are you sure? (y/n):
 ```
 
----
+### `tatl sessions report [<start>] [<end>] [<filter>...]`
 
-## Status Command
+Generate a time report summarizing hours by project.
 
-### `tatl status [--json]`
+**Syntax:**
+- Single date: `tatl sessions report -7d` (last 7 days to now)
+- Date range: `tatl sessions report 2024-01-01 2024-01-31`
+- Interval syntax: `tatl sessions report -7d..now`
+- With filter: `tatl sessions report -7d project:work`
 
-Show dashboard with system status and actionable information.
+**Arguments:**
+- `<start>` - Start date for report period (date expression)
+- `<end>` - End date for report period (defaults to now)
+- `<filter>...` - Optional task filter (same syntax as `tatl list`)
 
-**Description:** Displays a consolidated view of the current system state, including clock status, clock stack, today's sessions, and overdue tasks.
-
-**Options:**
-- `--json` - Output in JSON format
-
-**Sections:**
-1. **Clock Status** - Shows whether clocked in/out, current task description, and duration if clocked in
-2. **Clock Stack (Top 3)** - Displays the top 3 tasks in the clock stack with full details
-3. **Priority Tasks (Top 3)** - Displays the top 3 priority tasks NOT in the clock stack, sorted by urgency score
-4. **Today's Sessions** - Summary of sessions today (count and total duration)
-5. **Overdue Tasks** - Count of overdue tasks, or next overdue date if none
-
-**Priority Calculation:**
-Priority is calculated using a Taskwarrior-style urgency algorithm that considers:
-- **Due date proximity**: Tasks due soon or overdue get higher priority
-  - Overdue tasks: High urgency (15.0 - days_overdue * 0.5, min 1.0)
-  - Due within 7 days: Urgency increases as deadline approaches (12.0 - days_until_due)
-  - Due within 30 days: Moderate urgency (5.0 - days_until_due / 10.0)
-  - Due far in future: Low urgency (2.0 / (1.0 + days_until_due / 30.0))
-- **Allocation remaining**: Tasks with less time remaining get higher priority
-  - < 25% remaining: +3.0 urgency
-  - < 50% remaining: +1.5 urgency
-  - > 50% remaining: +0.5 urgency
-- **Task age**: Older tasks get a small boost (+0.1 per 30 days, max +2.0)
-- **Status**: Only pending tasks are included in priority calculation
-
-Priority tasks exclude tasks already in the clock stack, as those are already being worked on.
+**Behavior:**
+- Aggregates session time by project hierarchy
+- Shows percentage of total for each project
+- Sessions are clipped to report period boundaries
+- Filters apply to tasks (only sessions for matching tasks are included)
 
 **Examples:**
 ```bash
-# Show dashboard
-tatl status
+# Last 7 days
+tatl sessions report -7d
 
-# JSON output
-tatl status --json
+# Specific date range
+tatl sessions report 2024-01-01 2024-01-31
+
+# Using interval syntax
+tatl sessions report -7d..now
+tatl sessions report 2024-01-01..2024-01-31
+
+# With task filter
+tatl sessions report -7d project:work
+tatl sessions report -30d +urgent
+
+# Combining all options
+tatl sessions report -7d..now project:work +billable
 ```
-
-**Output Format:**
-```
-=== Clock Status ===
-Clocked IN on task 1: Fix bug (2h30m)
-
-=== Clock Stack (Top 3) ===
-[0] 1: Fix bug project:work +urgent due:2026-01-15 alloc:2h
-[1] 2: Review PR project:work +code-review
-[2] 3: Write docs project:docs
-
-=== Priority Tasks (Top 3) ===
-4: Critical bug fix project:work +urgent due:2026-01-10 (priority: 15.2)
-5: Documentation update project:docs due:2026-01-20 (priority: 8.5)
-6: Code review project:work +code-review (priority: 1.5)
-
-=== Today's Sessions ===
-5 session(s), 4h30m
-
-=== Overdue Tasks ===
-2 task(s) overdue
-```
-
-**JSON Output:**
-The `--json` flag outputs structured data:
-```json
-{
-  "clock": {
-    "state": "in",
-    "task_id": 1,
-    "duration_secs": 9000
-  },
-  "clock_stack": [
-    {
-      "position": 0,
-      "id": 1,
-      "description": "Fix bug",
-      "status": "pending",
-      "project_id": 1,
-      "tags": ["urgent"],
-      "due_ts": 1705276800,
-      "allocation_secs": 7200
-    }
-  ],
-  "today_sessions": {
-    "count": 5,
-    "total_duration_secs": 16200
-  },
-            "overdue": {
-                "count": 2,
-                "next_overdue_ts": null
-            },
-            "priority_tasks": [
-                {
-                    "id": 4,
-                    "description": "Critical bug fix",
-                    "status": "pending",
-                    "project_id": 1,
-                    "tags": ["urgent"],
-                    "due_ts": 1705276800,
-                    "allocation_secs": null,
-                    "priority": 15.2
-                }
-            ]
-        }
-        ```
 
 ---
 
@@ -862,6 +858,7 @@ Filters support AND, OR, and NOT operations with implicit AND.
 - `due:<expr>` - Due date (any, none, or date expression)
 - `scheduled:<expr>` - Scheduled date
 - `wait:<expr>` - Wait date
+- `desc:<pattern>` - Description contains pattern (case-insensitive substring match)
 - `waiting` - Derived: wait_ts is set and in the future
 - `kanban:<status>` - Derived kanban status (proposed, paused, queued, working, next, live, done)
 

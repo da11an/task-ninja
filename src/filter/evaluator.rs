@@ -193,6 +193,12 @@ impl FilterTerm {
                 // Case-insensitive comparison
                 Ok(task_kanban.to_lowercase() == *status)
             }
+            FilterTerm::Desc(pattern) => {
+                // Case-insensitive substring match on description
+                let desc_lower = task.description.to_lowercase();
+                let pattern_lower = pattern.to_lowercase();
+                Ok(desc_lower.contains(&pattern_lower))
+            }
         }
     }
 }

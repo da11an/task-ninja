@@ -1,7 +1,6 @@
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 use crate::db::DbConnection;
-use crate::models::Task;
 use crate::repo::{ProjectRepo, TaskRepo, StackRepo, SessionRepo, AnnotationRepo, TemplateRepo, ViewRepo};
 use crate::cli::parser::{parse_task_args, join_description};
 use crate::cli::commands_sessions::{handle_task_sessions_list_with_filter, handle_task_sessions_show_with_filter, handle_sessions_modify, handle_sessions_delete, handle_sessions_report};
@@ -11,7 +10,6 @@ use crate::utils::{parse_date_expr, parse_duration, fuzzy};
 use crate::filter::{parse_filter, filter_tasks};
 use crate::respawn::respawn_task;
 use crate::cli::abbrev;
-use chrono::{Local, TimeZone, Datelike};
 use std::collections::HashMap;
 use anyhow::{Context, Result};
 
@@ -33,9 +31,9 @@ pub enum Commands {
     },
     /// Add a new task
     Add {
-        /// Automatically start timing after creating task
-        #[arg(long = "on", visible_alias = "clock-in")]
-        start_timing: bool,
+        /// Automatically start timing after creating task (use --on=<time> for earlier start, e.g., --on=14:00)
+        #[arg(long = "on", visible_alias = "clock-in", num_args = 0..=1, require_equals = true, default_missing_value = "")]
+        start_timing: Option<String>,
         /// Add historical session for task (e.g., "09:00..12:00")
         #[arg(long = "onoff")]
         onoff_interval: Option<String>,
@@ -195,6 +193,11 @@ pub enum Commands {
         /// Task ID(s) to enqueue (comma-separated list)
         task_id: String,
     },
+    /// Queue management commands
+    Queue {
+        #[command(subcommand)]
+        subcommand: QueueCommands,
+    },
     /// Sessions management commands
     Sessions {
         #[command(subcommand)]
@@ -202,12 +205,6 @@ pub enum Commands {
         /// Task ID or filter (optional)
         #[arg(long)]
         task: Option<String>,
-    },
-    /// Show dashboard with system status
-    Status {
-        /// Output in JSON format
-        #[arg(long)]
-        json: bool,
     },
 }
 
@@ -247,6 +244,8 @@ pub enum ProjectCommands {
         /// Project name to unarchive
         name: String,
     },
+    /// Show task counts by kanban status per project
+    Report,
 }
 
 
@@ -287,12 +286,19 @@ pub enum SessionsCommands {
     },
     /// Generate a time report summarizing hours by project
     Report {
-        /// Start date/time for report period (e.g., "2024-01-01", "-7d")
-        #[arg(value_name = "START", allow_hyphen_values = true)]
-        start: Option<String>,
-        /// End date/time for report period (defaults to now)
-        #[arg(value_name = "END", allow_hyphen_values = true)]
-        end: Option<String>,
+        /// Report arguments: [start] [end] [filter...]
+        /// Examples: "-7d", "-7d..now", "project:work", "-7d project:work"
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum QueueCommands {
+    /// Sort the queue by a field (priority, due, scheduled, alloc)
+    Sort {
+        /// Field to sort by. Prefix with - for descending (e.g., -priority, -due)
+        field: String,
     },
 }
 
@@ -458,6 +464,13 @@ fn handle_command(cli: Cli) -> Result<()> {
         Commands::Enqueue { task_id } => {
             handle_task_enqueue(task_id)
         }
+        Commands::Queue { subcommand } => {
+            match subcommand {
+                QueueCommands::Sort { field } => {
+                    handle_queue_sort(&field)
+                }
+            }
+        }
         Commands::Sessions { subcommand, task } => {
             match subcommand {
                 SessionsCommands::List { filter, json } => {
@@ -480,21 +493,30 @@ fn handle_command(cli: Cli) -> Result<()> {
                 SessionsCommands::Delete { session_id, yes } => {
                     handle_sessions_delete(session_id, yes)
                 }
-                SessionsCommands::Report { start, end } => {
-                    handle_sessions_report(start, end)
+                SessionsCommands::Report { args } => {
+                    handle_sessions_report(args)
                 }
             }
-        }
-        Commands::Status { json } => {
-            handle_status(json)
         }
     }
 }
 
 /// Prompt user to create a new project
 /// Returns: Some(true) if project should be created, Some(false) if skipped, None if cancelled
-fn prompt_create_project(project_name: &str) -> Result<Option<bool>> {
-    eprint!("This is a new project '{}'. Add new project? [y/n/c] (default: y): ", project_name);
+fn prompt_create_project(project_name: &str, conn: &Connection) -> Result<Option<bool>> {
+    // Check for similar existing projects
+    let all_projects = ProjectRepo::list(conn, false)?; // active projects only
+    let project_tuples: Vec<(String, bool)> = all_projects.iter()
+        .map(|p| (p.name.clone(), p.is_archived))
+        .collect();
+    let near_matches = fuzzy::find_near_project_matches(project_name, &project_tuples, 2);
+    
+    if !near_matches.is_empty() {
+        let match_names: Vec<&str> = near_matches.iter().map(|(name, _)| name.as_str()).collect();
+        eprintln!("Note: Similar existing projects: {}", match_names.join(", "));
+    }
+    
+    eprint!("'{}' is a new project. Create it? [y/n/c] (default: y): ", project_name);
     std::io::Write::flush(&mut std::io::stderr())
         .map_err(|e| anyhow::anyhow!("Failed to flush stderr: {}", e))?;
     
@@ -646,18 +668,288 @@ fn handle_projects(cmd: ProjectCommands) -> Result<()> {
             println!("Unarchived project '{}'", name);
             Ok(())
         }
+        ProjectCommands::Report => {
+            handle_projects_report(&conn)
+        }
     }
 }
 
-fn handle_task_add(mut args: Vec<String>, mut start_timing: bool, mut onoff_interval: Option<String>, mut enqueue: bool, auto_yes: bool) -> Result<()> {
+fn handle_projects_report(conn: &Connection) -> Result<()> {
+    use crate::models::TaskStatus;
+    use std::collections::BTreeMap;
+    
+    // Get all tasks
+    let all_tasks = TaskRepo::list_all(conn)?;
+    
+    // Get stack items for kanban status calculation
+    let stack = StackRepo::get_or_create_default(conn)?;
+    let stack_items = StackRepo::get_items(conn, stack.id.unwrap())?;
+    let stack_task_ids: std::collections::HashSet<i64> = stack_items.iter().map(|i| i.task_id).collect();
+    
+    // Get open session for LIVE status
+    let open_session = SessionRepo::get_open(conn)?;
+    let live_task_id = open_session.as_ref().map(|s| s.task_id);
+    
+    // Build project hierarchy with counts
+    #[derive(Default)]
+    struct ProjectStats {
+        proposed: i64,
+        queued: i64,
+        paused: i64,
+        next: i64,
+        live: i64,
+        done: i64,
+    }
+    
+    impl ProjectStats {
+        fn total(&self) -> i64 {
+            self.proposed + self.queued + self.paused + self.next + self.live + self.done
+        }
+    }
+    
+    let mut project_stats: BTreeMap<String, ProjectStats> = BTreeMap::new();
+    let mut no_project_stats = ProjectStats::default();
+    
+    // Calculate kanban status for each task
+    for (task, _tags) in &all_tasks {
+        let task_id = task.id.unwrap();
+        
+        // Calculate kanban status
+        let kanban = if task.status == TaskStatus::Completed || task.status == TaskStatus::Closed {
+            "done"
+        } else if Some(task_id) == live_task_id {
+            "live"
+        } else if stack_task_ids.contains(&task_id) {
+            if stack_items.first().map(|i| i.task_id) == Some(task_id) {
+                "next"
+            } else {
+                "queued"
+            }
+        } else {
+            // Not in queue - check if has sessions
+            let sessions = SessionRepo::get_by_task(conn, task_id)?;
+            if !sessions.is_empty() {
+                "paused"
+            } else {
+                "proposed"
+            }
+        };
+        
+        // Get project name
+        let project_name = if let Some(pid) = task.project_id {
+            let mut stmt = conn.prepare("SELECT name FROM projects WHERE id = ?1")?;
+            stmt.query_row([pid], |row| row.get::<_, String>(0)).ok()
+        } else {
+            None
+        };
+        
+        // Update stats
+        let stats = if let Some(name) = project_name {
+            project_stats.entry(name).or_default()
+        } else {
+            &mut no_project_stats
+        };
+        
+        match kanban {
+            "proposed" => stats.proposed += 1,
+            "queued" => stats.queued += 1,
+            "paused" => stats.paused += 1,
+            "next" => stats.next += 1,
+            "live" => stats.live += 1,
+            "done" => stats.done += 1,
+            _ => {}
+        }
+    }
+    
+    // Calculate totals
+    let mut total_stats = ProjectStats::default();
+    for stats in project_stats.values() {
+        total_stats.proposed += stats.proposed;
+        total_stats.queued += stats.queued;
+        total_stats.paused += stats.paused;
+        total_stats.next += stats.next;
+        total_stats.live += stats.live;
+        total_stats.done += stats.done;
+    }
+    total_stats.proposed += no_project_stats.proposed;
+    total_stats.queued += no_project_stats.queued;
+    total_stats.paused += no_project_stats.paused;
+    total_stats.next += no_project_stats.next;
+    total_stats.live += no_project_stats.live;
+    total_stats.done += no_project_stats.done;
+    
+    // Print report
+    let pw = 25; // project width
+    println!("Projects Report");
+    println!("{}", "═".repeat(pw + 50));
+    println!("{:<pw$} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}", 
+        "Project", "Proposed", "Queued", "Paused", "NEXT", "LIVE", "Done", "Total", pw = pw);
+    println!("{} {} {} {} {} {} {} {}", 
+        "─".repeat(pw), "─".repeat(8), "─".repeat(8), "─".repeat(8), 
+        "─".repeat(6), "─".repeat(6), "─".repeat(6), "─".repeat(6));
+    
+    for (name, stats) in &project_stats {
+        println!("{:<pw$} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
+            truncate_str(name, pw),
+            stats.proposed, stats.queued, stats.paused, 
+            stats.next, stats.live, stats.done, stats.total(),
+            pw = pw);
+    }
+    
+    if no_project_stats.total() > 0 {
+        println!("{:<pw$} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
+            "(no project)",
+            no_project_stats.proposed, no_project_stats.queued, no_project_stats.paused,
+            no_project_stats.next, no_project_stats.live, no_project_stats.done, no_project_stats.total(),
+            pw = pw);
+    }
+    
+    println!("{} {} {} {} {} {} {} {}", 
+        "─".repeat(pw), "─".repeat(8), "─".repeat(8), "─".repeat(8), 
+        "─".repeat(6), "─".repeat(6), "─".repeat(6), "─".repeat(6));
+    println!("{:<pw$} {:>8} {:>8} {:>8} {:>6} {:>6} {:>6} {:>6}",
+        "TOTAL",
+        total_stats.proposed, total_stats.queued, total_stats.paused,
+        total_stats.next, total_stats.live, total_stats.done, total_stats.total(),
+        pw = pw);
+    
+    Ok(())
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}…", &s[..max_len - 1])
+    }
+}
+
+fn handle_queue_sort(field: &str) -> Result<()> {
+    let conn = DbConnection::connect()?;
+    
+    // Parse field and direction
+    let (field_name, descending) = if field.starts_with('-') {
+        (&field[1..], true)
+    } else {
+        (field, false)
+    };
+    
+    // Validate field
+    let valid_fields = ["priority", "due", "scheduled", "alloc", "allocation", "id", "description"];
+    let field_lower = field_name.to_lowercase();
+    if !valid_fields.iter().any(|f| f.starts_with(&field_lower)) {
+        user_error(&format!(
+            "Invalid sort field '{}'. Valid fields: priority, due, scheduled, alloc, id, description",
+            field_name
+        ));
+    }
+    
+    // Normalize allocation field name
+    let sort_field = if field_lower.starts_with("alloc") { "alloc" } else { &field_lower };
+    
+    // Get current queue
+    let stack = StackRepo::get_or_create_default(&conn)?;
+    let stack_id = stack.id.unwrap();
+    let items = StackRepo::get_items(&conn, stack_id)?;
+    
+    if items.is_empty() {
+        println!("Queue is empty.");
+        return Ok(());
+    }
+    
+    // Fetch tasks for all items
+    let mut task_items: Vec<(i64, Option<crate::models::Task>)> = items.iter()
+        .map(|item| {
+            let task = TaskRepo::get_by_id(&conn, item.task_id).ok().flatten();
+            (item.task_id, task)
+        })
+        .collect();
+    
+    // Sort by the specified field
+    task_items.sort_by(|a, b| {
+        let (_, task_a) = a;
+        let (_, task_b) = b;
+        
+        match (task_a, task_b) {
+            (Some(ta), Some(tb)) => {
+                let cmp = match sort_field {
+                    "priority" => {
+                        // Use priority UDA if available
+                        let pa = ta.udas.get("priority").and_then(|v| v.parse::<i64>().ok()).unwrap_or(i64::MAX);
+                        let pb = tb.udas.get("priority").and_then(|v| v.parse::<i64>().ok()).unwrap_or(i64::MAX);
+                        pa.cmp(&pb)
+                    }
+                    "due" => {
+                        let da = ta.due_ts.unwrap_or(i64::MAX);
+                        let db = tb.due_ts.unwrap_or(i64::MAX);
+                        da.cmp(&db)
+                    }
+                    "scheduled" => {
+                        let sa = ta.scheduled_ts.unwrap_or(i64::MAX);
+                        let sb = tb.scheduled_ts.unwrap_or(i64::MAX);
+                        sa.cmp(&sb)
+                    }
+                    "alloc" => {
+                        let aa = ta.alloc_secs.unwrap_or(i64::MAX);
+                        let ab = tb.alloc_secs.unwrap_or(i64::MAX);
+                        aa.cmp(&ab)
+                    }
+                    "id" => {
+                        let ia = ta.id.unwrap_or(0);
+                        let ib = tb.id.unwrap_or(0);
+                        ia.cmp(&ib)
+                    }
+                    "description" => ta.description.cmp(&tb.description),
+                    _ => std::cmp::Ordering::Equal,
+                };
+                if descending { cmp.reverse() } else { cmp }
+            }
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
+    
+    // Reorder the stack
+    let new_order: Vec<i64> = task_items.iter().map(|(id, _)| *id).collect();
+    
+    // Update stack positions
+    let tx = conn.unchecked_transaction()?;
+    
+    // Delete all current items
+    tx.execute("DELETE FROM stack_items WHERE stack_id = ?1", rusqlite::params![stack_id])?;
+    
+    // Re-insert in new order
+    let now = chrono::Utc::now().timestamp();
+    for (ordinal, task_id) in new_order.iter().enumerate() {
+        tx.execute(
+            "INSERT INTO stack_items (stack_id, task_id, ordinal, added_ts) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![stack_id, task_id, ordinal as i64, now],
+        )?;
+    }
+    
+    tx.commit()?;
+    
+    let direction = if descending { "descending" } else { "ascending" };
+    println!("Queue sorted by {} ({})", sort_field, direction);
+    
+    Ok(())
+}
+
+fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut onoff_interval: Option<String>, mut enqueue: bool, auto_yes: bool) -> Result<()> {
     // Extract --on, --onoff, and --enqueue flags from args if they appear after the description
     // (CLAP limitation: with trailing_var_arg, flags after args are treated as part of args)
     let mut filtered_args = Vec::new();
     let mut i = 0;
     while i < args.len() {
         if args[i] == "--on" || args[i] == "--clock-in" {
-            start_timing = true;
+            // Bare --on flag (no time specified, starts at now)
+            start_timing = Some(String::new());
             // Don't include it in the args passed to parse_task_args
+        } else if args[i].starts_with("--on=") || args[i].starts_with("--clock-in=") {
+            // Handle --on=time format (start at specified time)
+            let eq_pos = args[i].find('=').unwrap();
+            start_timing = Some(args[i][eq_pos + 1..].to_string());
         } else if args[i] == "--enqueue" {
             enqueue = true;
             // Don't include it in the args passed to parse_task_args
@@ -717,7 +1009,7 @@ fn handle_task_add(mut args: Vec<String>, mut start_timing: bool, mut onoff_inte
                 Some(project.id.unwrap())
             } else {
                 // Interactive prompt
-                match prompt_create_project(&project_name)? {
+                match prompt_create_project(&project_name, &conn)? {
                     Some(true) => {
                         // User said yes - create project
                         if let Err(e) = validate_project_name(&project_name) {
@@ -909,10 +1201,15 @@ fn handle_task_add(mut args: Vec<String>, mut start_timing: bool, mut onoff_inte
             
             println!("Added session for task {} ({} - {}, {})", task_id, format_time(start_ts), format_time(end_ts), format_duration_human(duration));
         }
-    } else if start_timing {
+    } else if let Some(start_time) = start_timing {
         // If --on flag is set, start timing the newly created task (takes precedence over --enqueue)
         // handle_task_on will push to stack and start timing atomically
-        handle_task_on(task_id.to_string(), Vec::new())
+        let time_args = if start_time.is_empty() {
+            Vec::new()
+        } else {
+            vec![start_time]
+        };
+        handle_task_on(task_id.to_string(), time_args)
             .context("Failed to start timing task")?;
     } else if enqueue {
         // Enqueue to queue (adds to end, does not start timing)
@@ -1227,7 +1524,7 @@ fn modify_single_task(conn: &Connection, task_id: i64, args: &[String], auto_cre
                 println!("Created project '{}' (id: {})", project.name, project.id.unwrap());
                 Some(Some(project.id.unwrap()))
             } else {
-                match prompt_create_project(project_name)? {
+                match prompt_create_project(project_name, conn)? {
                     Some(true) => {
                         if let Err(e) = validate_project_name(&project_name) {
                             user_error(&e);
@@ -1309,6 +1606,11 @@ fn modify_single_task(conn: &Connection, task_id: i64, args: &[String], auto_cre
         if resp == "none" {
             Some(None)
         } else {
+            // Validate respawn rule before accepting
+            use crate::respawn::parser::RespawnRule;
+            RespawnRule::parse(resp).map_err(|e| {
+                anyhow::anyhow!("Invalid respawn rule '{}': {}", resp, e)
+            })?;
             Some(Some(resp.clone()))
         }
     } else {
@@ -1347,6 +1649,17 @@ fn modify_single_task(conn: &Connection, task_id: i64, args: &[String], auto_cre
     .context("Failed to modify task")?;
     
     println!("Modified task {}", task_id);
+    
+    // If respawn was set (and not clearing), show description of what will happen
+    if let Some(resp_str) = &parsed.respawn {
+        if resp_str != "none" {
+            use crate::respawn::parser::RespawnRule;
+            if let Ok(rule) = RespawnRule::parse(resp_str) {
+                println!("↻ {}", rule.describe());
+            }
+        }
+    }
+    
     Ok(())
 }
 
@@ -1824,6 +2137,7 @@ fn find_overlapping_sessions(conn: &Connection, start: i64, end: i64) -> Result<
 /// Modify a session to remove the specified interval
 fn modify_session_for_removal(conn: &Connection, session: &crate::models::Session, remove_start: i64, remove_end: i64) -> Result<()> {
     let s_start = session.start_ts;
+    let is_open = session.end_ts.is_none();
     let s_end = session.end_ts.unwrap_or(i64::MAX);
     let session_id = session.id.unwrap();
     
@@ -1833,23 +2147,34 @@ fn modify_session_for_removal(conn: &Connection, session: &crate::models::Sessio
         
     } else if remove_start > s_start && remove_end < s_end {
         // Falls within: split into two sessions
-        // First part: s_start to remove_start
+        // First part: s_start to remove_start (always closed)
         SessionRepo::update_times(conn, session_id, s_start, Some(remove_start))?;
-        // Second part: remove_end to s_end (for same task)
-        SessionRepo::create_closed(conn, session.task_id, remove_end, s_end)?;
+        // Second part: remove_end to s_end
+        if is_open {
+            // Original was open - second part should remain open
+            SessionRepo::create(conn, session.task_id, remove_end)?;
+        } else {
+            SessionRepo::create_closed(conn, session.task_id, remove_end, s_end)?;
+        }
         
     } else if remove_start <= s_start && remove_end < s_end {
         // Overlaps start: truncate at remove_end
-        SessionRepo::update_times(conn, session_id, remove_end, Some(s_end))?;
+        let new_end = if is_open { None } else { Some(s_end) };
+        SessionRepo::update_times(conn, session_id, remove_end, new_end)?;
         
     } else if remove_start > s_start && remove_end >= s_end {
-        // Overlaps end: truncate at remove_start
+        // Overlaps end: truncate at remove_start (always closes the session)
         SessionRepo::update_times(conn, session_id, s_start, Some(remove_start))?;
         
     } else if remove_start == remove_end {
         // Single time point: split at that point
         SessionRepo::update_times(conn, session_id, s_start, Some(remove_start))?;
-        SessionRepo::create_closed(conn, session.task_id, remove_start, s_end)?;
+        if is_open {
+            // Original was open - second part should remain open
+            SessionRepo::create(conn, session.task_id, remove_start)?;
+        } else {
+            SessionRepo::create_closed(conn, session.task_id, remove_start, s_end)?;
+        }
     }
     
     Ok(())
@@ -3234,171 +3559,6 @@ fn handle_delete_interactive(conn: &Connection, task_ids: &[i64]) -> Result<()> 
     
     if deleted_count > 0 {
         println!("Deleted {} task(s)", deleted_count);
-    }
-    
-    Ok(())
-}
-
-fn handle_status(json: bool) -> Result<()> {
-    use crate::cli::output::format_dashboard;
-    use crate::models::TaskStatus;
-    
-    let conn = DbConnection::connect()?;
-    
-    // Query clock state and current task
-    let open_session = SessionRepo::get_open(&conn)?;
-    let stack = StackRepo::get_or_create_default(&conn)?;
-    let stack_items = StackRepo::get_items(&conn, stack.id.unwrap())?;
-    
-    let clock_state = if let Some(session) = &open_session {
-        let duration = chrono::Utc::now().timestamp() - session.start_ts;
-        if let Some(top_item) = stack_items.first() {
-            if session.task_id == top_item.task_id {
-                Some((session.task_id, duration))
-            } else {
-                Some((top_item.task_id, 0)) // Clocked out but has task in stack
-            }
-        } else {
-            Some((session.task_id, duration)) // Clocked in but no stack
-        }
-    } else if let Some(top_item) = stack_items.first() {
-        Some((top_item.task_id, 0)) // Clocked out, task in stack
-    } else {
-        None // No clock, no stack
-    };
-    
-    // Query top 3 clock stack tasks with details
-    let clock_stack_tasks: Vec<(usize, Task, Vec<String>)> = stack_items
-        .iter()
-        .take(3)
-        .enumerate()
-        .filter_map(|(idx, item)| {
-            if let Ok(Some(task)) = TaskRepo::get_by_id(&conn, item.task_id) {
-                if let Ok(tags) = TaskRepo::get_tags(&conn, item.task_id) {
-                    return Some((idx, task, tags));
-                }
-            }
-            None
-        })
-        .collect();
-    
-    // Query today's session summary
-    let now = chrono::Utc::now();
-    let today_start = Local.with_ymd_and_hms(
-        now.year(), now.month(), now.day(), 0, 0, 0
-    ).single()
-    .map(|dt| dt.with_timezone(&chrono::Utc).timestamp())
-    .unwrap_or(0);
-    
-    let all_sessions = SessionRepo::list_all(&conn)?;
-    let today_sessions: Vec<_> = all_sessions.iter()
-        .filter(|s| s.start_ts >= today_start)
-        .collect();
-    
-    let today_duration: i64 = today_sessions.iter()
-        .filter_map(|s| {
-            if let Some(end_ts) = s.end_ts {
-                Some(end_ts - s.start_ts)
-            } else {
-                Some(now.timestamp() - s.start_ts)
-            }
-        })
-        .sum();
-    
-    // Query overdue tasks (due_ts < now && status = pending)
-    let all_tasks = TaskRepo::list_all(&conn)?;
-    let now_ts = chrono::Utc::now().timestamp();
-    
-    let overdue_tasks: Vec<_> = all_tasks.iter()
-        .filter(|(task, _)| {
-            task.status == TaskStatus::Pending &&
-            task.due_ts.is_some() &&
-            task.due_ts.unwrap() < now_ts
-        })
-        .collect();
-    
-    // Calculate next overdue date if none overdue
-    let next_overdue = if overdue_tasks.is_empty() {
-        all_tasks.iter()
-            .filter(|(task, _)| {
-                task.status == TaskStatus::Pending &&
-                task.due_ts.is_some() &&
-                task.due_ts.unwrap() >= now_ts
-            })
-            .map(|(task, _)| task.due_ts.unwrap())
-            .min()
-    } else {
-        None
-    };
-    
-    // Query top 3 priority tasks NOT in clock stack
-    use crate::cli::priority::get_top_priority_tasks;
-    let stack_task_ids: Vec<i64> = stack_items.iter().map(|item| item.task_id).collect();
-    let priority_tasks = get_top_priority_tasks(&conn, &stack_task_ids, 3)?;
-    
-    // Resolve clock task description (for status JSON)
-    let clock_task_description = if let Some((task_id, _)) = clock_state {
-        TaskRepo::get_by_id(&conn, task_id)?
-            .map(|task| task.description)
-    } else {
-        None
-    };
-    
-    // Format and display dashboard
-    if json {
-        let dashboard_json = serde_json::json!({
-            "clock": {
-                "state": if clock_state.is_some() { "in" } else { "out" },
-                "task_id": clock_state.map(|(id, _)| id),
-                "task_description": clock_task_description,
-                "duration_secs": clock_state.map(|(_, d)| d),
-            },
-            "clock_stack": clock_stack_tasks.iter().map(|(idx, task, tags)| {
-                serde_json::json!({
-                    "position": idx,
-                    "id": task.id,
-                    "description": task.description,
-                    "status": task.status.as_str(),
-                    "project_id": task.project_id,
-                    "tags": tags,
-                    "due_ts": task.due_ts,
-                    "allocation_secs": task.alloc_secs,
-                })
-            }).collect::<Vec<_>>(),
-            "today_sessions": {
-                "count": today_sessions.len(),
-                "total_duration_secs": today_duration,
-            },
-            "overdue": {
-                "count": overdue_tasks.len(),
-                "next_overdue_ts": next_overdue,
-            },
-            "priority_tasks": priority_tasks.iter().map(|(task, tags, priority)| {
-                serde_json::json!({
-                    "id": task.id,
-                    "description": task.description,
-                    "status": task.status.as_str(),
-                    "project_id": task.project_id,
-                    "tags": tags,
-                    "due_ts": task.due_ts,
-                    "allocation_secs": task.alloc_secs,
-                    "priority": priority,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        println!("{}", serde_json::to_string_pretty(&dashboard_json)?);
-    } else {
-        let dashboard = format_dashboard(
-            &conn,
-            clock_state,
-            &clock_stack_tasks,
-            &priority_tasks,
-            today_sessions.len(),
-            today_duration,
-            overdue_tasks.len(),
-            next_overdue,
-        )?;
-        print!("{}", dashboard);
     }
     
     Ok(())

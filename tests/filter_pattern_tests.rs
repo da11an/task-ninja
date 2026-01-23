@@ -299,3 +299,81 @@ fn test_filter_annotate_no_matches() {
         .failure()
         .stderr(predicate::str::contains("No matching tasks found"));
 }
+
+#[test]
+fn test_desc_filter_matches_substring() {
+    let (temp_dir, _guard) = setup_test_env();
+    
+    // Create tasks with different descriptions
+    new_cmd(&temp_dir)
+        .args(&["add", "Team meeting at 3pm"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["add", "Code review for PR"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["add", "Weekly standup meeting"])
+        .assert()
+        .success();
+    
+    // Filter by description containing "meeting"
+    let output = new_cmd(&temp_dir)
+        .args(&["list", "desc:meeting"])
+        .assert()
+        .success();
+    
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Team meeting"), "Should find 'Team meeting'");
+    assert!(stdout.contains("Weekly standup meeting"), "Should find 'Weekly standup meeting'");
+    assert!(!stdout.contains("Code review"), "Should not find 'Code review'");
+}
+
+#[test]
+fn test_desc_filter_case_insensitive() {
+    let (temp_dir, _guard) = setup_test_env();
+    
+    // Create task with capital letters
+    new_cmd(&temp_dir)
+        .args(&["add", "IMPORTANT Task"])
+        .assert()
+        .success();
+    
+    // Filter with lowercase
+    let output = new_cmd(&temp_dir)
+        .args(&["list", "desc:important"])
+        .assert()
+        .success();
+    
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("IMPORTANT"), "Should find case-insensitive match");
+}
+
+#[test]
+fn test_desc_filter_combined_with_other_filters() {
+    let (temp_dir, _guard) = setup_test_env();
+    
+    // Create projects
+    new_cmd(&temp_dir).args(&["projects", "add", "work"]).assert().success();
+    
+    // Create tasks
+    new_cmd(&temp_dir)
+        .args(&["add", "Work meeting", "project:work"])
+        .assert()
+        .success();
+    new_cmd(&temp_dir)
+        .args(&["add", "Personal meeting"])
+        .assert()
+        .success();
+    
+    // Filter by project AND description
+    let output = new_cmd(&temp_dir)
+        .args(&["list", "project:work", "desc:meeting"])
+        .assert()
+        .success();
+    
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    assert!(stdout.contains("Work meeting"), "Should find matching task");
+    assert!(!stdout.contains("Personal meeting"), "Should not find non-matching task");
+}

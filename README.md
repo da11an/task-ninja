@@ -179,6 +179,7 @@ tatl list kanban:queued      # Show queued tasks
 # Create
 tatl add "Description" project:name +tag due:tomorrow
 tatl add "Quick task" --on          # Create and start timing
+tatl add "Meeting" --on=14:00       # Create and start timing at 14:00
 tatl add "Past work" --onoff 09:00..12:00  # Create with historical session
 
 # Read
@@ -225,6 +226,8 @@ tatl enqueue 1,3,5          # Add multiple tasks
 tatl dequeue                # Remove queue[0]
 tatl dequeue 5              # Remove specific task
 tatl dequeue --all          # Clear entire queue
+tatl queue sort due         # Sort queue by due date
+tatl queue sort -priority   # Sort by priority (descending)
 ```
 
 ### Projects
@@ -235,6 +238,7 @@ tatl projects add work.email        # Nested project
 tatl projects list
 tatl projects rename old new
 tatl projects archive old-project
+tatl projects report                # Task counts by project and status
 ```
 
 ### Sessions
@@ -243,10 +247,14 @@ tatl projects archive old-project
 tatl sessions list                  # All sessions
 tatl sessions list project:work     # With task filter
 tatl sessions list start:today      # Sessions from today
-tatl sessions list start:-7d         # Sessions from last 7 days
+tatl sessions list start:-7d        # Sessions from last 7 days
 tatl sessions list project:work start:-7d  # Combine filters
-tatl sessions modify 5 start:09:00  # Adjust times
+tatl sessions modify 5 09:00..17:00 # Adjust both times (interval syntax)
+tatl sessions modify 5 ..17:00      # Adjust end time only
+tatl sessions modify 5 09:00..      # Adjust start time only
 tatl sessions delete 5 -y           # Delete session
+tatl sessions report -7d            # Time report for last 7 days
+tatl sessions report -7d..now project:work  # Report with filter
 ```
 
 ## Filter Syntax
@@ -260,6 +268,10 @@ tatl list +urgent or +important
 
 # NOT
 tatl list not +waiting
+
+# Description search
+tatl list desc:meeting           # Tasks with "meeting" in description
+tatl list desc:"code review"     # Phrase search
 
 # Complex
 tatl list project:work status:pending not +blocked

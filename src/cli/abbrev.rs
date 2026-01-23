@@ -36,17 +36,22 @@ pub fn find_unique_command<'a>(prefix: &str, commands: &'a [&str]) -> Result<&'a
 /// Top-level commands in Tatl
 pub const TOP_LEVEL_COMMANDS: &[&str] = &[
     "projects", "add", "list", "modify", "on", "off", "offon", "onoff", "dequeue",
-    "annotate", "finish", "close", "reopen", "delete", "enqueue", "sessions", "status", "show"
+    "annotate", "finish", "close", "reopen", "delete", "enqueue", "queue", "sessions", "show"
 ];
 
 /// Project subcommands
 pub const PROJECT_COMMANDS: &[&str] = &[
-    "add", "list", "rename", "archive", "unarchive"
+    "add", "list", "rename", "archive", "unarchive", "report"
 ];
 
 /// Sessions subcommands
 pub const SESSIONS_COMMANDS: &[&str] = &[
     "list", "show", "modify", "delete", "report"
+];
+
+/// Queue subcommands
+pub const QUEUE_COMMANDS: &[&str] = &[
+    "sort"
 ];
 
 /// Task subcommands (used with task <id> <subcommand> pattern)
@@ -59,6 +64,7 @@ pub fn get_subcommands(command: &str) -> Option<&'static [&'static str]> {
     match command {
         "projects" => Some(PROJECT_COMMANDS),
         "sessions" => Some(SESSIONS_COMMANDS),
+        "queue" => Some(QUEUE_COMMANDS),
         _ => None,
     }
 }

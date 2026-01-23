@@ -59,6 +59,41 @@ impl RespawnRule {
         Ok(RespawnRule { pattern })
     }
     
+    /// Return a human-readable description of the respawn pattern
+    pub fn describe(&self) -> String {
+        match &self.pattern {
+            RespawnPattern::Daily => "When completed, a new task will be created for the next day".to_string(),
+            RespawnPattern::Weekly => "When completed, a new task will be created for the next week".to_string(),
+            RespawnPattern::Monthly => "When completed, a new task will be created for the next month".to_string(),
+            RespawnPattern::Yearly => "When completed, a new task will be created for the next year".to_string(),
+            RespawnPattern::EveryDays(n) => format!("When completed, a new task will be created for {} days later", n),
+            RespawnPattern::EveryWeeks(n) => format!("When completed, a new task will be created for {} weeks later", n),
+            RespawnPattern::EveryMonths(n) => format!("When completed, a new task will be created for {} months later", n),
+            RespawnPattern::EveryYears(n) => format!("When completed, a new task will be created for {} years later", n),
+            RespawnPattern::Weekdays(days) => {
+                let day_names: Vec<&str> = days.iter().map(|d| match d {
+                    0 => "Mon", 1 => "Tue", 2 => "Wed", 3 => "Thu",
+                    4 => "Fri", 5 => "Sat", 6 => "Sun", _ => "?",
+                }).collect();
+                format!("When completed, a new task will be created for the next {}", day_names.join(", "))
+            }
+            RespawnPattern::Monthdays(days) => {
+                let day_strs: Vec<String> = days.iter().map(|d| d.to_string()).collect();
+                format!("When completed, a new task will be created for day {} of the next month", day_strs.join(" or "))
+            }
+            RespawnPattern::NthWeekday { nth, weekday } => {
+                let weekday_name = match weekday {
+                    0 => "Monday", 1 => "Tuesday", 2 => "Wednesday", 3 => "Thursday",
+                    4 => "Friday", 5 => "Saturday", 6 => "Sunday", _ => "?",
+                };
+                let ordinal = match nth {
+                    1 => "1st", 2 => "2nd", 3 => "3rd", 4 => "4th", 5 => "5th", _ => "?",
+                };
+                format!("When completed, a new task will be created for the {} {} of the next month", ordinal, weekday_name)
+            }
+        }
+    }
+    
     fn parse_pattern(pattern_str: &str) -> Result<RespawnPattern> {
         // Check for simple frequencies
         match pattern_str {

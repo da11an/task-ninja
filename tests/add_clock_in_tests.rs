@@ -192,3 +192,56 @@ fn test_add_on_when_timer_not_running() {
         .success()
         .stdout(predicate::str::contains("Stopped timing task"));
 }
+
+#[test]
+fn test_add_with_on_equals_time() {
+    let (temp_dir, _guard) = setup_test_env();
+    
+    // Add task with --on=14:00 (backdated start)
+    let mut cmd = get_task_cmd(&temp_dir);
+    cmd.args(&["add", "--on=14:00", "Meeting started at 2pm"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created task"))
+        .stdout(predicate::str::contains("Started timing"));
+    
+    // Verify session exists and has correct start time
+    let output = get_task_cmd(&temp_dir)
+        .args(&["sessions", "list", "--json"])
+        .assert()
+        .success();
+    
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sessions = json.as_array().unwrap();
+    assert!(!sessions.is_empty(), "Should have at least one session");
+    
+    // Session should be open (running)
+    let session = &sessions[0];
+    assert_eq!(session["end_ts"], serde_json::Value::Null, "Session should be open");
+}
+
+#[test]
+fn test_add_with_on_equals_time_creates_open_session() {
+    let (temp_dir, _guard) = setup_test_env();
+    
+    // Add task with --on=09:00
+    get_task_cmd(&temp_dir)
+        .args(&["add", "--on=09:00", "Early morning task"])
+        .assert()
+        .success();
+    
+    // Verify session is open (running)
+    let output = get_task_cmd(&temp_dir)
+        .args(&["sessions", "list", "--json"])
+        .assert()
+        .success();
+    
+    let stdout = String::from_utf8(output.get_output().stdout.clone()).unwrap();
+    let json: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let sessions = json.as_array().unwrap();
+    assert!(!sessions.is_empty());
+    
+    let session = &sessions[0];
+    assert_eq!(session["end_ts"], serde_json::Value::Null);
+}

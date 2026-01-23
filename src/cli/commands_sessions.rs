@@ -839,6 +839,19 @@ fn parse_session_modify_args(args: Vec<String>) -> Result<(Option<Option<i64>>, 
     let mut end: Option<Option<i64>> = None;
     
     for arg in args {
+        // Check for interval syntax first: <start>..<end>, <start>.., ..<end>
+        if arg.contains("..") {
+            let (start_parsed, end_parsed) = parse_session_interval(&arg)?;
+            if start_parsed.is_some() {
+                start = start_parsed;
+            }
+            if end_parsed.is_some() {
+                end = end_parsed;
+            }
+            continue;
+        }
+        
+        // Legacy start:/end: syntax (still supported for backwards compatibility)
         if arg.starts_with("start:") {
             let expr = &arg[6..];
             if expr == "none" {
@@ -862,9 +875,44 @@ fn parse_session_modify_args(args: Vec<String>) -> Result<(Option<Option<i64>>, 
             // Flags are handled separately
             continue;
         } else {
-            return Err(anyhow::anyhow!("Invalid argument: {}. Expected start:<expr> or end:<expr>", arg));
+            return Err(anyhow::anyhow!(
+                "Invalid argument: {}. Use interval syntax: <start>..<end>, <start>.., or ..<end>",
+                arg
+            ));
         }
     }
+    
+    Ok((start, end))
+}
+
+/// Parse interval syntax for session modification
+/// Formats: <start>..<end>, <start>.., ..<end>
+fn parse_session_interval(arg: &str) -> Result<(Option<Option<i64>>, Option<Option<i64>>)> {
+    let parts: Vec<&str> = arg.splitn(2, "..").collect();
+    if parts.len() != 2 {
+        return Err(anyhow::anyhow!("Invalid interval syntax: {}", arg));
+    }
+    
+    let start_str = parts[0].trim();
+    let end_str = parts[1].trim();
+    
+    let start = if start_str.is_empty() {
+        None // Don't modify start
+    } else {
+        let ts = parse_date_expr(start_str)
+            .context(format!("Failed to parse start time: {}", start_str))?;
+        Some(Some(ts))
+    };
+    
+    let end = if end_str.is_empty() {
+        None // Don't modify end
+    } else if end_str == "now" {
+        Some(Some(chrono::Utc::now().timestamp()))
+    } else {
+        let ts = parse_date_expr(end_str)
+            .context(format!("Failed to parse end time: {}", end_str))?;
+        Some(Some(ts))
+    };
     
     Ok((start, end))
 }
@@ -1372,40 +1420,61 @@ fn print_project_tree(
 }
 
 /// Handle the sessions report command
-pub fn handle_sessions_report(start: Option<String>, end: Option<String>) -> Result<()> {
+/// Args format: [start] [end] [filter...] or [start..end] [filter...]
+pub fn handle_sessions_report(args: Vec<String>) -> Result<()> {
     let conn = DbConnection::connect()?;
     let now = chrono::Utc::now().timestamp();
     
-    // Parse start date
-    let period_start = if let Some(start_expr) = start {
-        parse_date_expr(&start_expr)
-            .context(format!("Invalid start date: {}", start_expr))?
-    } else {
-        // Find earliest session
-        let sessions = SessionRepo::list_all(&conn)?;
-        sessions.iter().map(|s| s.start_ts).min().unwrap_or(now)
-    };
+    // Separate date args from filter args
+    let mut date_args: Vec<String> = Vec::new();
+    let mut filter_tokens: Vec<String> = Vec::new();
     
-    // Parse end date
-    let period_end = if let Some(end_expr) = end {
-        // Parse the date and use end of day
-        let ts = parse_date_expr(&end_expr)
-            .context(format!("Invalid end date: {}", end_expr))?;
-        // Add 24 hours minus 1 second to include the full day
-        ts + 86400 - 1
-    } else {
-        now
-    };
+    for arg in args {
+        // If it looks like a filter token (contains : but isn't a time, or starts with + or -)
+        if arg.starts_with('+') || arg.starts_with('-') && !arg.chars().skip(1).all(|c| c.is_ascii_digit() || c == 'd' || c == 'w' || c == 'm' || c == 'y') {
+            filter_tokens.push(arg);
+        } else if arg.contains(':') && !is_time_like(&arg) {
+            // Looks like project:X or tag:X filter, not a time
+            filter_tokens.push(arg);
+        } else if arg == "or" || arg == "not" {
+            filter_tokens.push(arg);
+        } else if date_args.len() < 2 {
+            // First two non-filter args are date args
+            date_args.push(arg);
+        } else {
+            // More date args means it's probably filter tokens
+            filter_tokens.push(arg);
+        }
+    }
+    
+    // Parse date arguments
+    let (period_start, period_end) = parse_report_date_args(&conn, &date_args, now)?;
     
     // Get all sessions that overlap with the period
     let all_sessions = SessionRepo::list_all(&conn)?;
-    let sessions: Vec<_> = all_sessions.into_iter()
+    let mut sessions: Vec<_> = all_sessions.into_iter()
         .filter(|s| {
             let session_end = s.end_ts.unwrap_or(now);
             // Session overlaps if it starts before period ends and ends after period starts
             s.start_ts < period_end && session_end > period_start
         })
         .collect();
+    
+    // Apply task filter if provided
+    if !filter_tokens.is_empty() {
+        use crate::filter::{parse_filter, filter_tasks};
+        
+        let filter_expr = parse_filter(filter_tokens)
+            .map_err(|e| anyhow::anyhow!("Filter parse error: {}", e))?;
+        
+        let matching_tasks = filter_tasks(&conn, &filter_expr)?;
+        let matching_task_ids: std::collections::HashSet<i64> = matching_tasks
+            .iter()
+            .filter_map(|(task, _)| task.id)
+            .collect();
+        
+        sessions.retain(|s| matching_task_ids.contains(&s.task_id));
+    }
     
     if sessions.is_empty() {
         println!("No sessions found for this period.");
@@ -1459,4 +1528,68 @@ pub fn handle_sessions_report(start: Option<String>, end: Option<String>) -> Res
     println!();
     
     Ok(())
+}
+
+/// Check if a string looks like a time expression (not a filter token)
+fn is_time_like(s: &str) -> bool {
+    // Times look like: "14:30", "09:00", but not "project:work"
+    if let Some(pos) = s.find(':') {
+        let before = &s[..pos];
+        let after = &s[pos + 1..];
+        // Time: both parts are numeric
+        before.chars().all(|c| c.is_ascii_digit()) && after.chars().all(|c| c.is_ascii_digit())
+    } else {
+        false
+    }
+}
+
+/// Parse report date arguments (handles interval syntax too)
+fn parse_report_date_args(conn: &Connection, date_args: &[String], now: i64) -> Result<(i64, i64)> {
+    if date_args.is_empty() {
+        // No date args - use all time to now
+        let sessions = SessionRepo::list_all(conn)?;
+        let ps = sessions.iter().map(|s| s.start_ts).min().unwrap_or(now);
+        return Ok((ps, now));
+    }
+    
+    let first = &date_args[0];
+    
+    // Check for interval syntax
+    if first.contains("..") {
+        let parts: Vec<&str> = first.splitn(2, "..").collect();
+        let start_str = parts[0].trim();
+        let end_str = parts.get(1).map(|s| s.trim()).unwrap_or("");
+        
+        let ps = if start_str.is_empty() {
+            let sessions = SessionRepo::list_all(conn)?;
+            sessions.iter().map(|s| s.start_ts).min().unwrap_or(now)
+        } else {
+            parse_date_expr(start_str)
+                .context(format!("Invalid start date: {}", start_str))?
+        };
+        
+        let pe = if end_str.is_empty() || end_str == "now" {
+            now
+        } else {
+            let ts = parse_date_expr(end_str)
+                .context(format!("Invalid end date: {}", end_str))?;
+            ts + 86400 - 1
+        };
+        
+        return Ok((ps, pe));
+    }
+    
+    // Single start, optional end
+    let ps = parse_date_expr(first)
+        .context(format!("Invalid start date: {}", first))?;
+    
+    let pe = if date_args.len() > 1 {
+        let ts = parse_date_expr(&date_args[1])
+            .context(format!("Invalid end date: {}", date_args[1]))?;
+        ts + 86400 - 1
+    } else {
+        now
+    };
+    
+    Ok((ps, pe))
 }

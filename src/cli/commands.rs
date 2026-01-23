@@ -30,74 +30,225 @@ pub enum Commands {
         subcommand: ProjectCommands,
     },
     /// Add a new task
+    #[command(long_about = "Create a new task with optional attributes, timing, and queue placement.
+
+The task description is all text that doesn't match field patterns. Field syntax includes:
+  project:<name>     - Assign to project (creates if new with -y)
+  due:<expr>         - Set due date (see DATE EXPRESSIONS below)
+  scheduled:<expr>   - Set scheduled date
+  wait:<expr>        - Set wait date
+  allocation:<dur>   - Set time allocation (e.g., \"2h\", \"30m\", \"1d\")
+  template:<name>    - Use template
+  respawn:<pattern>  - Set respawn rule (see RESPAWN PATTERNS below)
+  +<tag>             - Add tag
+  -<tag>             - Remove tag
+  uda.<key>:<value>  - Set user-defined attribute
+
+DATE EXPRESSIONS:
+  Relative: tomorrow, +3d, -1w, +2m, +1y
+  Absolute: 2024-01-15, 2024-01-15 14:30
+  Time-only: 09:00, 14:30
+
+RESPAWN PATTERNS:
+  Simple: daily, weekly, monthly, yearly
+  Advanced: weekdays:mon,wed,fri, monthdays:1,15, nth:1:day, every:2w
+
+If --onoff is specified, it takes precedence over --on and --enqueue.
+
+EXAMPLES:
+  tatl add \"Fix bug\" project:work +urgent
+  tatl add \"Review PR\" due:tomorrow allocation:1h
+  tatl add \"Daily standup\" respawn:daily due:09:00
+  tatl add --on \"Start working on feature\"
+  tatl add \"Forgot to track meeting\" --onoff 14:00..15:00 project:meetings")]
     Add {
-        /// Automatically start timing after creating task (use --on=<time> for earlier start, e.g., --on=14:00)
+        /// Start timing immediately after creation. If TIME is provided (e.g., --on=14:00), the session starts at that time instead of now. Pushes task to queue[0].
         #[arg(long = "on", visible_alias = "clock-in", num_args = 0..=1, require_equals = true, default_missing_value = "")]
         start_timing: Option<String>,
-        /// Add historical session for task (e.g., "09:00..12:00")
+        /// Add historical session for the task. Interval format: \"start..end\" (e.g., \"09:00..12:00\"). Takes precedence over --on and --enqueue.
         #[arg(long = "onoff")]
         onoff_interval: Option<String>,
-        /// Automatically enqueue task to clock stack after creating
+        /// Add task to end of queue without starting timing
         #[arg(long = "enqueue")]
         enqueue: bool,
-        /// Auto-confirm prompts (e.g., create new projects, modify overlapping sessions)
+        /// Auto-confirm prompts (create new projects, modify overlapping sessions)
         #[arg(short = 'y', long)]
         yes: bool,
-        /// Task description and fields (e.g., "fix bug project:work +urgent")
+        /// Task description and fields. The description is all text not matching field patterns. Examples: \"fix bug project:work +urgent\", \"Review PR due:tomorrow allocation:1h\"
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
     /// List tasks
+    #[command(long_about = "List tasks matching optional filter criteria.
+
+FILTER SYNTAX:
+  Field filters:
+    id:<n>              - Match by task ID
+    status:<status>      - Match by status (pending, completed, closed, deleted)
+    project:<name>       - Match by project (supports prefix matching for nested projects)
+    due:<expr>           - Match by due date (see DATE EXPRESSIONS)
+    scheduled:<expr>     - Match by scheduled date
+    wait:<expr>          - Match by wait date
+    kanban:<status>      - Match by kanban status (proposed, paused, queued, NEXT, LIVE, done)
+    desc:<pattern>       - Match description containing pattern (case-insensitive)
+    description:<pattern> - Alias for desc:
+  
+  Tag filters:
+    +<tag>               - Tasks with tag
+    -<tag>               - Tasks without tag
+  
+  Derived filters:
+    waiting              - Tasks with wait_ts in the future
+  
+  Operators:
+    (implicit AND)       - Adjacent terms are ANDed together
+    or                   - OR operator (lowest precedence)
+    not                  - NOT operator (highest precedence)
+  
+  Examples:
+    project:work +urgent
+    +urgent or +important
+    not +waiting
+    project:work +urgent or project:home +important
+    desc:bug status:pending
+    due:tomorrow kanban:NEXT
+
+DATE EXPRESSIONS (for due:, scheduled:, wait:):
+  Relative: tomorrow, +3d, -1w, +2m, +1y
+  Absolute: 2024-01-15, 2024-01-15 14:30
+  Time-only: 09:00, 14:30
+  Ranges: start:..end:, -7d..now
+
+EXAMPLES:
+  tatl list
+  tatl list project:work +urgent
+  tatl list +urgent or +important
+  tatl list desc:bug status:pending
+  tatl list due:tomorrow kanban:NEXT --relative")]
     List {
-        /// Filter arguments (e.g., "project:work +urgent")
+        /// Filter arguments. Multiple filters are ANDed together. Use 'or' for OR, 'not' for NOT. Examples: \"project:work +urgent\", \"+urgent or +important\", \"desc:bug status:pending\"
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         filter: Vec<String>,
         /// Output in JSON format
         #[arg(long)]
         json: bool,
-        /// Show Due dates as relative time (e.g., "2 days ago", "in 3 days")
+        /// Show due dates as relative time (e.g., \"2 days ago\", \"in 3 days\")
         #[arg(long)]
         relative: bool,
     },
     /// Show detailed summary of task(s)
+    #[command(long_about = "Show detailed information about one or more tasks.
+
+TARGET SYNTAX:
+  Single ID:       10
+  ID range:        1..5 (tasks 1, 2, 3, 4, 5)
+  ID list:         1,3,5 (tasks 1, 3, and 5)
+  Filter:          project:work +urgent (same filter syntax as 'tatl list')
+
+The output includes task details, annotations, sessions, and related information.
+
+EXAMPLES:
+  tatl show 10
+  tatl show 1..5
+  tatl show project:work +urgent")]
     Show {
-        /// Task ID, range, or filter
+        /// Task ID, ID range (e.g., \"1..5\"), ID list (e.g., \"1,3,5\"), or filter expression. Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work +urgent\"
         target: String,
     },
     /// Modify tasks
+    #[command(long_about = "Modify one or more tasks. Target can be a task ID, ID range (e.g., \"1..5\"), ID list (e.g., \"1,3,5\"), or filter expression.
+
+MODIFICATION SYNTAX:
+  Field modifications:
+    project:<name>       - Assign to project (use \"project:none\" to clear)
+    due:<expr>           - Set due date (use \"due:none\" to clear, see DATE EXPRESSIONS)
+    scheduled:<expr>      - Set scheduled date (use \"scheduled:none\" to clear)
+    wait:<expr>           - Set wait date (use \"wait:none\" to clear)
+    allocation:<dur>      - Set time allocation (e.g., \"2h\", \"30m\", use \"allocation:none\" to clear)
+    template:<name>       - Set template (use \"template:none\" to clear)
+    respawn:<pattern>     - Set respawn rule (use \"respawn:none\" to clear, see RESPAWN PATTERNS)
+    uda.<key>:<value>     - Set user-defined attribute (use \"uda.<key>:none\" to clear)
+  
+  Tag modifications:
+    +<tag>                - Add tag
+    -<tag>                - Remove tag
+  
+  Description:
+    Any text not matching field patterns becomes the new description.
+
+RESPAWN PATTERNS:
+  Simple: daily, weekly, monthly, yearly
+  Advanced: weekdays:mon,wed,fri, monthdays:1,15, nth:1:day, every:2w
+  
+  Respawn rules are validated on modification. A preview message shows what will happen when the task is completed.
+
+DATE EXPRESSIONS:
+  Relative: tomorrow, +3d, -1w, +2m, +1y
+  Absolute: 2024-01-15, 2024-01-15 14:30
+  Time-only: 09:00, 14:30
+
+FILTER SYNTAX (for target selection):
+  Same as 'tatl list' filter syntax. See 'tatl list --help' for details.
+
+EXAMPLES:
+  tatl modify 10 +urgent due:+2d
+  tatl modify project:work description:Updated description
+  tatl modify +urgent due:+1d --yes
+  tatl modify 5 respawn:daily due:09:00
+  tatl modify 1..5 project:work --yes")]
     Modify {
-        /// Task ID or filter
+        /// Task ID, ID range (e.g., \"1..5\"), ID list (e.g., \"1,3,5\"), or filter expression. Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work +urgent\"
         target: String,
-        /// Modification arguments (description, fields, tags)
+        /// Modification arguments. Field syntax: project:<name>, due:<expr>, +tag, -tag, etc. Any text not matching field patterns becomes the new description.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
-        /// Apply to all matching tasks without confirmation
+        /// Apply to all matching tasks without confirmation (also auto-creates new projects if needed)
         #[arg(short = 'y', long)]
         yes: bool,
         /// Force one-by-one confirmation for each task
         #[arg(long)]
         interactive: bool,
-        /// Start timing after modification
+        /// Start timing after modification (pushes to queue[0] and starts timing)
         #[arg(long = "on")]
         start_timing: bool,
     },
     /// Start timing a task
+    #[command(long_about = "Start timing a task. If task_id is provided, pushes that task to queue[0] and starts timing. If omitted, starts timing queue[0].
+
+TIME EXPRESSIONS:
+  Time-only:       09:00, 14:30 (starts session at that time today)
+  Date + time:     2024-01-15 09:00 (starts session at specific date/time)
+  Interval:        09:00..11:00 (creates session from 09:00 to 11:00 today)
+
+If an interval is provided, creates a historical session instead of starting a new one.")]
     On {
-        /// Task ID (optional, defaults to queue[0])
+        /// Task ID (optional, defaults to queue[0]). If provided, pushes task to queue[0] and starts timing.
         task_id: Option<String>,
-        /// Time expression or interval (e.g., "09:00" or "09:00..11:00")
+        /// Time expression or interval. Time-only (e.g., \"09:00\") starts session at that time today. Interval (e.g., \"09:00..11:00\") creates historical session.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         time_args: Vec<String>,
     },
     /// Stop timing current task
+    #[command(long_about = "Stop timing the current task (queue[0]). If end time is provided, sets session end to that time instead of now.
+
+TIME EXPRESSIONS:
+  Time-only:       14:30 (ends session at that time today)
+  Date + time:     2024-01-15 14:30 (ends session at specific date/time)")]
     Off {
-        /// End time (optional, defaults to now)
+        /// End time (optional, defaults to now). Time-only (e.g., \"14:30\") ends session at that time today.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         time_args: Vec<String>,
     },
     /// Stop current session and resume (capture break)
+    #[command(long_about = "Capture a break in your work session. Stops the current session and immediately starts a new one for the same task.
+
+This is useful when you're interrupted or take a break. The current session ends at the specified time (or now), and a new session starts immediately after.
+
+TIME EXPRESSIONS:
+  Time-only:       14:30 (ends current session at 14:30, starts new one immediately)
+  Interval:        14:30..15:00 (ends current session at 14:30, starts new one at 15:00)")]
     Offon {
-        /// Time expression or interval (e.g., "14:30" or "14:30..15:00")
+        /// Time expression or interval. Time-only (e.g., \"14:30\") ends current session at that time and starts new one immediately. Interval (e.g., \"14:30..15:00\") ends current session at start time and starts new one at end time.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         time_args: Vec<String>,
         /// Skip confirmation for history modifications
@@ -105,8 +256,16 @@ pub enum Commands {
         yes: bool,
     },
     /// Add historical session (or insert into existing time)
+    #[command(long_about = "Add a historical session for a task. Useful for logging time you forgot to track or correcting session times.
+
+INTERVAL SYNTAX:
+  Time interval:    09:00..12:00 (creates 3-hour session today)
+  Date + interval:  2024-01-15 09:00..12:00 (creates session on specific date)
+  Task + interval:  <task_id> 09:00..12:00 (adds session to specific task)
+
+If the interval overlaps with existing sessions, you'll be prompted to modify them (use -y to auto-confirm).")]
     Onoff {
-        /// Time interval (e.g., "09:00..12:00")
+        /// Time interval or task ID + interval. Format: \"start..end\" (e.g., \"09:00..12:00\") or \"<task_id> start..end\". If task_id is omitted, uses queue[0] or prompts.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Skip confirmation for overlapping session modifications
@@ -114,13 +273,24 @@ pub enum Commands {
         yes: bool,
     },
     /// Remove task from queue without finishing
+    #[command(long_about = "Remove a task from the queue without completing it. The task remains in pending status.")]
     Dequeue {
         /// Task ID (optional, defaults to queue[0])
         task_id: Option<String>,
     },
     /// Annotate a task
+    #[command(long_about = "Add a note or annotation to a task. If you're currently timing a task (queue[0]), the annotation is automatically linked to that task and the current session.
+
+TARGET SYNTAX:
+  Omit (when clocked in):  Uses queue[0] and current session
+  Task ID:                 10
+  ID range:                1..5
+  ID list:                 1,3,5
+  Filter:                  project:work +urgent
+
+Use --delete <annotation_id> to remove an annotation.")]
     Annotate {
-        /// Task ID (optional when clocked in)
+        /// Task ID, ID range, ID list, or filter (optional when clocked in, defaults to queue[0]). Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work +urgent\"
         target: Option<String>,
         /// Annotation note text
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
@@ -139,10 +309,25 @@ pub enum Commands {
         delete: Option<String>,
     },
     /// Mark task(s) as finished
+    #[command(long_about = "Mark one or more tasks as completed. If task has a respawn rule, a new instance will be created when completed.
+
+TARGET SYNTAX:
+  Omit:              Uses queue[0] (current task)
+  Task ID:           10
+  ID range:          1..5
+  ID list:           1,3,5
+  Filter:            project:work +urgent
+
+TIME EXPRESSIONS:
+  Omit:              Ends session at now
+  Time-only:         14:30 (ends session at that time today)
+  Date + time:       2024-01-15 14:30
+
+If --next is specified, automatically starts timing the next task in queue after completion.")]
     Finish {
-        /// Task ID or filter (optional, defaults to queue[0])
+        /// Task ID, ID range, ID list, or filter (optional, defaults to queue[0]). Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work +urgent\"
         target: Option<String>,
-        /// End time expression (optional, defaults to now)
+        /// End time expression (optional, defaults to now). Time-only (e.g., \"14:30\") ends session at that time today.
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         time_args: Vec<String>,
         /// Start next task in queue after completion
@@ -156,8 +341,16 @@ pub enum Commands {
         interactive: bool,
     },
     /// Mark task(s) as closed
+    #[command(long_about = "Mark one or more tasks as closed (cancelled, won't do, etc.). If task has a respawn rule, a new instance will be created when closed.
+
+TARGET SYNTAX:
+  Omit:              Uses queue[0] (current task)
+  Task ID:           10
+  ID range:          1..5
+  ID list:           1,3,5
+  Filter:            project:work +urgent")]
     Close {
-        /// Task ID or filter (optional, defaults to queue[0])
+        /// Task ID, ID range, ID list, or filter (optional, defaults to queue[0]). Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work +urgent\"
         target: Option<String>,
         /// Close all matching tasks without confirmation
         #[arg(short = 'y', long)]
@@ -167,8 +360,15 @@ pub enum Commands {
         interactive: bool,
     },
     /// Reopen completed or closed task(s)
+    #[command(long_about = "Reopen one or more completed or closed tasks, setting their status back to pending.
+
+TARGET SYNTAX:
+  Task ID:           10
+  ID range:          1..5
+  ID list:           1,3,5
+  Filter:            project:work status:completed")]
     Reopen {
-        /// Task ID or filter
+        /// Task ID, ID range, ID list, or filter. Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work status:completed\"
         target: String,
         /// Reopen all matching tasks without confirmation
         #[arg(short = 'y', long)]
@@ -178,8 +378,15 @@ pub enum Commands {
         interactive: bool,
     },
     /// Permanently delete task(s)
+    #[command(long_about = "Permanently delete one or more tasks. This action cannot be undone. All associated sessions, annotations, and events are also deleted.
+
+TARGET SYNTAX:
+  Task ID:           10
+  ID range:          1..5
+  ID list:           1,3,5
+  Filter:            project:work status:completed")]
     Delete {
-        /// Task ID or filter
+        /// Task ID, ID range, ID list, or filter. Examples: \"10\", \"1..5\", \"1,3,5\", \"project:work status:completed\"
         target: String,
         /// Delete all matching tasks without confirmation
         #[arg(short = 'y', long)]
@@ -189,20 +396,23 @@ pub enum Commands {
         interactive: bool,
     },
     /// Add task to end of clock stack
+    #[command(long_about = "Add one or more tasks to the end of the queue. Tasks are added in the order specified. Does not start timing.")]
     Enqueue {
-        /// Task ID(s) to enqueue (comma-separated list)
+        /// Task ID(s) to enqueue. Can be a single ID or comma-separated list (e.g., \"5\" or \"1,3,5\")
         task_id: String,
     },
     /// Queue management commands
+    #[command(long_about = "Manage the task queue. The queue is your \"currently working on\" list. Position 0 is always \"what's next\".")]
     Queue {
         #[command(subcommand)]
         subcommand: QueueCommands,
     },
     /// Sessions management commands
+    #[command(long_about = "Manage work sessions. Sessions track time spent on tasks.")]
     Sessions {
         #[command(subcommand)]
         subcommand: SessionsCommands,
-        /// Task ID or filter (optional)
+        /// Task ID or filter (optional). Filters sessions to specific tasks.
         #[arg(long)]
         task: Option<String>,
     },
@@ -211,13 +421,15 @@ pub enum Commands {
 #[derive(Subcommand)]
 pub enum ProjectCommands {
     /// Create a new project
+    #[command(long_about = "Create a new project. Projects support hierarchical organization using dot notation (e.g., 'work', 'work.email', 'work.email.inbox').")]
     Add {
-        /// Project name (supports nested projects with dot notation, e.g., admin.email)
+        /// Project name. Supports nested projects with dot notation (e.g., \"work\", \"work.email\", \"work.email.inbox\")
         name: String,
     },
     /// List projects
+    #[command(long_about = "List all projects. Shows project hierarchy and task counts.")]
     List {
-        /// Include archived projects
+        /// Include archived projects in the list
         #[arg(long)]
         archived: bool,
         /// Output in JSON format
@@ -225,26 +437,30 @@ pub enum ProjectCommands {
         json: bool,
     },
     /// Rename a project
+    #[command(long_about = "Rename a project. All tasks assigned to the old project name will be moved to the new name. Use --force to merge with an existing project.")]
     Rename {
         /// Current project name
         old_name: String,
         /// New project name
         new_name: String,
-        /// Force merge if new name already exists
+        /// Force merge if new name already exists (moves all tasks from old to new)
         #[arg(long)]
         force: bool,
     },
     /// Archive a project
+    #[command(long_about = "Archive a project. Archived projects are hidden from normal listings but can be viewed with --archived flag.")]
     Archive {
         /// Project name to archive
         name: String,
     },
     /// Unarchive a project
+    #[command(long_about = "Unarchive a project, making it visible in normal listings again.")]
     Unarchive {
         /// Project name to unarchive
         name: String,
     },
     /// Show task counts by kanban status per project
+    #[command(long_about = "Generate a report showing task counts grouped by project and kanban status (proposed, queued, paused, NEXT, LIVE, done).")]
     Report,
 }
 
@@ -252,8 +468,27 @@ pub enum ProjectCommands {
 #[derive(Subcommand)]
 pub enum SessionsCommands {
     /// List session history
+    #[command(long_about = "List work sessions. Can filter by date range, project, tags, or task.
+
+FILTER SYNTAX:
+  Date filters:
+    start:<expr>     - Sessions starting on or after date
+    end:<expr>       - Sessions ending on or before date
+    -7d              - Last 7 days (relative date)
+    -7d..now         - Date range (last 7 days to now)
+  
+  Task filters:
+    project:<name>   - Sessions for tasks in project
+    +<tag>           - Sessions for tasks with tag
+    task:<id>        - Sessions for specific task
+  
+  Examples:
+    tatl sessions list start:today
+    tatl sessions list -7d..now
+    tatl sessions list project:work
+    tatl sessions list start:-7d project:work")]
     List {
-        /// Filter arguments (e.g., "project:work +urgent")
+        /// Filter arguments. Date filters: start:<expr>, end:<expr>, -7d, -7d..now. Task filters: project:<name>, +tag, task:<id>. Examples: \"start:today\", \"-7d..now\", \"project:work\"
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         filter: Vec<String>,
         /// Output in JSON format
@@ -261,33 +496,59 @@ pub enum SessionsCommands {
         json: bool,
     },
     /// Show detailed session information
+    #[command(long_about = "Show detailed information about the current session (if one is active).")]
     Show,
     /// Modify session start/end times
+    #[command(long_about = "Modify the start and/or end time of a session.
+
+INTERVAL SYNTAX:
+  start:<time>..end:<time>  - Modify both start and end
+  start:<time>              - Modify only start time
+  end:<time>                - Modify only end time
+  
+  Examples:
+    start:09:00..end:12:00
+    start:2024-01-15 09:00..end:2024-01-15 12:00
+    start:09:00
+    end:12:00
+
+If the modification creates overlapping sessions, you'll be prompted to resolve conflicts (use --force to allow overlaps).")]
     Modify {
-        /// Session ID
+        /// Session ID to modify
         session_id: i64,
-        /// Modification arguments (start:<expr>, end:<expr>)
+        /// Modification arguments. Format: \"start:<time>..end:<time>\" or \"start:<time>\" or \"end:<time>\". Examples: \"start:09:00..end:12:00\", \"start:09:00\"
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
         /// Apply modification without confirmation
         #[arg(short = 'y', long)]
         yes: bool,
-        /// Allow modification even with conflicts
+        /// Allow modification even with conflicts (creates overlapping sessions)
         #[arg(long)]
         force: bool,
     },
     /// Delete a session
+    #[command(long_about = "Permanently delete a session. This action cannot be undone.")]
     Delete {
-        /// Session ID
+        /// Session ID to delete
         session_id: i64,
         /// Delete without confirmation
         #[arg(short = 'y', long)]
         yes: bool,
     },
     /// Generate a time report summarizing hours by project
+    #[command(long_about = "Generate a time report showing total hours worked by project, optionally filtered by date range and task criteria.
+
+REPORT SYNTAX:
+  Date range:        -7d, -7d..now, start:2024-01-01..end:2024-01-31
+  Task filters:      project:<name>, +tag, task:<id>
+  
+  Examples:
+    tatl sessions report
+    tatl sessions report -7d
+    tatl sessions report -7d..now project:work
+    tatl sessions report start:2024-01-01..end:2024-01-31 +urgent")]
     Report {
-        /// Report arguments: [start] [end] [filter...]
-        /// Examples: "-7d", "-7d..now", "project:work", "-7d project:work"
+        /// Report arguments. Date range: -7d, -7d..now, start:<expr>..end:<expr>. Task filters: project:<name>, +tag, task:<id>. Examples: \"-7d\", \"-7d..now\", \"-7d project:work\"
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
@@ -295,9 +556,22 @@ pub enum SessionsCommands {
 
 #[derive(Subcommand)]
 pub enum QueueCommands {
-    /// Sort the queue by a field (priority, due, scheduled, alloc)
+    /// Sort the queue by a field
+    #[command(long_about = "Sort the queue by a specified field. Use prefix '-' for descending order.
+
+SORT FIELDS:
+  priority    - Sort by priority (higher first by default)
+  due         - Sort by due date (earlier first by default)
+  scheduled   - Sort by scheduled date (earlier first by default)
+  alloc       - Sort by time allocation (longer first by default)
+
+EXAMPLES:
+  tatl queue sort priority      - Sort by priority (ascending)
+  tatl queue sort -priority    - Sort by priority (descending)
+  tatl queue sort due          - Sort by due date (ascending)
+  tatl queue sort -due         - Sort by due date (descending)")]
     Sort {
-        /// Field to sort by. Prefix with - for descending (e.g., -priority, -due)
+        /// Field to sort by. Options: priority, due, scheduled, alloc. Prefix with '-' for descending (e.g., \"-priority\", \"-due\")
         field: String,
     },
 }

@@ -1,0 +1,76 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH tatl 1  "tatl 0.3.0" 
+.SH NAME
+tatl \- Task and Time Ledger \- A powerful command\-line task and time tracking tool
+.SH SYNOPSIS
+\fBtatl\fR [\fB\-h\fR|\fB\-\-help\fR] [\fB\-V\fR|\fB\-\-version\fR] <\fIsubcommands\fR>
+.SH DESCRIPTION
+Task and Time Ledger \- A powerful command\-line task and time tracking tool
+.SH OPTIONS
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+\fB\-V\fR, \fB\-\-version\fR
+Print version
+.SH SUBCOMMANDS
+.TP
+tatl\-projects(1)
+Project management commands
+.TP
+tatl\-add(1)
+Add a new task
+.TP
+tatl\-list(1)
+List tasks
+.TP
+tatl\-show(1)
+Show detailed summary of task(s)
+.TP
+tatl\-modify(1)
+Modify tasks
+.TP
+tatl\-on(1)
+Start timing a task
+.TP
+tatl\-off(1)
+Stop timing current task
+.TP
+tatl\-offon(1)
+Stop current session and resume (capture break)
+.TP
+tatl\-onoff(1)
+Add historical session (or insert into existing time)
+.TP
+tatl\-dequeue(1)
+Remove task from queue without finishing
+.TP
+tatl\-annotate(1)
+Annotate a task
+.TP
+tatl\-finish(1)
+Mark task(s) as finished
+.TP
+tatl\-close(1)
+Mark task(s) as closed
+.TP
+tatl\-reopen(1)
+Reopen completed or closed task(s)
+.TP
+tatl\-delete(1)
+Permanently delete task(s)
+.TP
+tatl\-enqueue(1)
+Add task to end of clock stack
+.TP
+tatl\-queue(1)
+Queue management commands
+.TP
+tatl\-sessions(1)
+Sessions management commands
+.TP
+tatl\-help(1)
+Print this message or the help of the given subcommand(s)
+.SH VERSION
+v0.3.0

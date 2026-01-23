@@ -25,10 +25,61 @@ which tatl
 ~/.cargo/bin/tatl --help
 ```
 
+## Man Page Installation
+
+After installing `tatl`, you can also install the man page for `man tatl` support.
+
+### Quick Install (Recommended - User Installation)
+
+```bash
+# Run the installation script (automatically sets up MANPATH)
+./install-man-user.sh
+
+# Then reload your shell
+source ~/.bashrc  # or source ~/.zshrc
+
+# Now you can use:
+man tatl
+```
+
+### Manual Installation
+
+**For current user (no sudo required):**
+```bash
+# Generate the man page
+./scripts/generate-man.sh
+
+# Install to user directory
+mkdir -p ~/.local/share/man/man1
+cp man/man1/tatl.1 ~/.local/share/man/man1/
+
+# Add to MANPATH (add to ~/.bashrc or ~/.zshrc):
+echo 'export MANPATH="$HOME/.local/share/man:$MANPATH"' >> ~/.bashrc
+source ~/.bashrc  # or source ~/.zshrc
+```
+
+**For system-wide installation (requires sudo):**
+```bash
+# Generate the man page
+./scripts/generate-man.sh
+
+# Install system-wide
+sudo cp man/man1/tatl.1 /usr/local/share/man/man1/
+sudo mandb
+```
+
+After installation, you can view the man page with:
+```bash
+man tatl
+```
+
 ## Uninstall
 
 ```bash
 cargo uninstall tatl
+# Optionally remove man page:
+# sudo rm /usr/local/share/man/man1/tatl.1
+# sudo mandb
 ```
 
 ## Local Development (No Installation)

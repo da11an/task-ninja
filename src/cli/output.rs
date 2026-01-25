@@ -19,13 +19,19 @@ pub fn is_tty() -> bool {
     std::io::stdout().is_terminal()
 }
 
-/// Get terminal width from COLUMNS env var or default
+/// Get terminal width dynamically
 /// 
-/// Note: This function checks the COLUMNS environment variable which is typically
-/// set by shells. For more reliable detection, consider using a crate like `terminal_size`
-/// or `crossterm`, but for now this provides a reasonable default.
+/// Uses the `terminal_size` crate for reliable detection, with fallback to
+/// COLUMNS environment variable and a sensible default.
 pub fn get_terminal_width() -> usize {
-    // Try COLUMNS environment variable first (set by most shells)
+    // Try terminal_size crate first (most reliable, works after resize)
+    if let Some((terminal_size::Width(w), _)) = terminal_size::terminal_size() {
+        if w > 0 {
+            return w as usize;
+        }
+    }
+    
+    // Fallback to COLUMNS environment variable (set by most shells)
     if let Ok(cols) = std::env::var("COLUMNS") {
         if let Ok(width) = cols.parse::<usize>() {
             if width > 0 && width < 10000 { // Sanity check
@@ -262,21 +268,23 @@ enum TaskListColumn {
 
 /// Column display priority for adaptive width (lower = more important)
 /// Priority 1: Essential (never hide)
-/// Priority 2-3: Important (truncate last)
+/// Priority 2-3: Important (truncate only)
 /// Priority 4+: Secondary/Optional (hide first)
+/// 
+/// Hide order (first to last): Status -> Tags -> Priority -> Alloc -> Clock -> Kanban -> Due
 fn column_priority(column: TaskListColumn) -> u8 {
     match column {
-        TaskListColumn::Id => 1,
-        TaskListColumn::Queue => 1,
-        TaskListColumn::Description => 2,
-        TaskListColumn::Project => 3,
-        TaskListColumn::Status => 4,
-        TaskListColumn::Kanban => 4,
-        TaskListColumn::Due => 5,
-        TaskListColumn::Priority => 6,
-        TaskListColumn::Tags => 7,
-        TaskListColumn::Alloc => 8,
-        TaskListColumn::Clock => 8,
+        TaskListColumn::Id => 1,          // Never hide
+        TaskListColumn::Queue => 1,       // Never hide
+        TaskListColumn::Description => 2, // Truncate only
+        TaskListColumn::Project => 3,     // Truncate only
+        TaskListColumn::Due => 4,         // Hidden last
+        TaskListColumn::Kanban => 5,
+        TaskListColumn::Clock => 6,
+        TaskListColumn::Alloc => 7,
+        TaskListColumn::Priority => 8,
+        TaskListColumn::Tags => 9,
+        TaskListColumn::Status => 10,     // Hidden first
     }
 }
 
@@ -457,13 +465,29 @@ pub fn format_task_list_table(
             String::new()
         };
         
-        // Queue position (empty string if not in queue, "▶" if at position 0 with active session, "E" if external)
-        let queue_pos_str = if kanban == "external" {
-            "E".to_string()
-        } else if stack_pos == Some(0) && open_session_task_id == task.id {
+        // Queue position indicator
+        // Priority: queue position/▶ > @ (external) > ✓ (completed) > x (closed) > ! (stalled) > ? (proposed)
+        let queue_pos_str = if stack_pos == Some(0) && open_session_task_id == task.id {
+            // Active task at top of queue
             "▶".to_string()
         } else if let Some(p) = stack_pos {
+            // In queue with numeric position
             p.to_string()
+        } else if kanban == "external" {
+            // Awaiting external response
+            "@".to_string()
+        } else if task.status == TaskStatus::Completed {
+            // Completed
+            "✓".to_string()
+        } else if task.status == TaskStatus::Closed {
+            // Closed
+            "x".to_string()
+        } else if kanban == "stalled" {
+            // Has sessions but not in queue
+            "!".to_string()
+        } else if kanban == "proposed" {
+            // New task, not started
+            "?".to_string()
         } else {
             String::new()
         };

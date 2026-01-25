@@ -624,12 +624,36 @@ pub fn format_task_list_table(
             content_width + spacing
         }
 
-        // If total width exceeds terminal, start hiding columns by priority (highest priority number = hide first)
-        // Add a buffer to account for formatting differences, ANSI codes, and rounding
-        // Buffer accounts for: potential newline handling, ANSI codes in bold formatting, rounding errors,
-        // and any discrepancies between calculated width and actual formatted output
-        // Increased to 10 to handle edge cases where calculations don't perfectly match output
-        let target_width = terminal_width.saturating_sub(0); // Leave 0 char buffer for safety
+        // Adaptive width strategy:
+        // 1. First, truncate Description to minimum width (if needed)
+        // 2. Then, truncate Project to minimum width (if needed)
+        // 3. Only after truncation, start hiding columns by priority
+        
+        let target_width = terminal_width;
+        let mut current_total = calc_total_width(&columns, &column_widths);
+        
+        // Step 1: Truncate Description first (before hiding any columns)
+        if current_total > target_width && columns.contains(&TaskListColumn::Description) {
+            if let Some(width) = column_widths.get_mut(&TaskListColumn::Description) {
+                let excess = current_total.saturating_sub(target_width);
+                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
+                *width = new_width;
+                current_total = calc_total_width(&columns, &column_widths);
+            }
+        }
+
+        // Step 2: Truncate Project (before hiding any columns)
+        if current_total > target_width && columns.contains(&TaskListColumn::Project) {
+            if let Some(width) = column_widths.get_mut(&TaskListColumn::Project) {
+                let excess = current_total.saturating_sub(target_width);
+                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Project));
+                *width = new_width;
+                current_total = calc_total_width(&columns, &column_widths);
+            }
+        }
+
+        // Step 3: Only after truncation is exhausted, hide columns by priority
+        // Hide order (first to last): Status -> Tags -> Priority -> Alloc -> Clock -> Kanban -> Due
         let mut iterations = 0;
         const MAX_ITERATIONS: usize = 20; // Prevent infinite loops
         while calc_total_width(&columns, &column_widths) > target_width 
@@ -639,7 +663,7 @@ pub fn format_task_list_table(
             
             // Find the lowest priority column (highest priority number) that can be hidden
             let hide_candidate = columns.iter()
-                .filter(|c| column_priority(**c) > 1) // Never hide priority 1 columns (ID, Queue)
+                .filter(|c| column_priority(**c) > 3) // Never hide priority 1-3 columns (ID, Queue, Description, Project)
                 .max_by_key(|c| column_priority(**c))
                 .copied();
 
@@ -649,57 +673,6 @@ pub fn format_task_list_table(
                 column_widths.remove(&col_to_hide);
             } else {
                 break; // No more columns to hide
-            }
-        }
-
-        // If still too wide, truncate Description to minimum width
-        // Use the same target_width from above (10 char buffer)
-        let mut current_total = calc_total_width(&columns, &column_widths);
-        if current_total > target_width && columns.contains(&TaskListColumn::Description) {
-            if let Some(width) = column_widths.get_mut(&TaskListColumn::Description) {
-                let excess = current_total.saturating_sub(target_width);
-                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
-                *width = new_width;
-                // Recalculate total after truncation
-                current_total = calc_total_width(&columns, &column_widths);
-            }
-        }
-
-        // If still too wide, truncate Project to minimum width
-        if current_total > target_width && columns.contains(&TaskListColumn::Project) {
-            if let Some(width) = column_widths.get_mut(&TaskListColumn::Project) {
-                let excess = current_total.saturating_sub(target_width);
-                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Project));
-                *width = new_width;
-                // Recalculate total after truncation
-                current_total = calc_total_width(&columns, &column_widths);
-            }
-        }
-        
-        // Final safety check: if still too wide after all adjustments, aggressively truncate
-        // This handles edge cases where calculations don't perfectly match output
-        // Keep iterating until we're definitely under the target width
-        let mut safety_iterations = 0;
-        const MAX_SAFETY_ITERATIONS: usize = 10;
-        while calc_total_width(&columns, &column_widths) > target_width && safety_iterations < MAX_SAFETY_ITERATIONS {
-            safety_iterations += 1;
-            let current_check = calc_total_width(&columns, &column_widths);
-            let excess = current_check.saturating_sub(target_width);
-            
-            // Try Description first
-            if columns.contains(&TaskListColumn::Description) {
-                if let Some(width) = column_widths.get_mut(&TaskListColumn::Description) {
-                    *width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
-                }
-            }
-            
-            // Then try Project if still too wide
-            let check_after_desc = calc_total_width(&columns, &column_widths);
-            if check_after_desc > target_width && columns.contains(&TaskListColumn::Project) {
-                if let Some(width) = column_widths.get_mut(&TaskListColumn::Project) {
-                    let excess2 = check_after_desc.saturating_sub(target_width);
-                    *width = (*width).saturating_sub(excess2).max(column_min_width(TaskListColumn::Project));
-                }
             }
         }
     }

@@ -1,1 +1,0 @@
-linux reminder read -p options for improving capbilities

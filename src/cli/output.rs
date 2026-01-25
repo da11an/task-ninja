@@ -20,11 +20,22 @@ pub fn is_tty() -> bool {
 }
 
 /// Get terminal width from COLUMNS env var or default
+/// 
+/// Note: This function checks the COLUMNS environment variable which is typically
+/// set by shells. For more reliable detection, consider using a crate like `terminal_size`
+/// or `crossterm`, but for now this provides a reasonable default.
 pub fn get_terminal_width() -> usize {
-    std::env::var("COLUMNS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(120) // Default width
+    // Try COLUMNS environment variable first (set by most shells)
+    if let Ok(cols) = std::env::var("COLUMNS") {
+        if let Ok(width) = cols.parse::<usize>() {
+            if width > 0 && width < 10000 { // Sanity check
+                return width;
+            }
+        }
+    }
+    
+    // Default fallback - reasonable default for most terminals
+    120
 }
 
 /// Apply bold formatting if in TTY mode
@@ -550,16 +561,20 @@ pub fn format_task_list_table(
     // Calculate column widths
     let mut column_widths: HashMap<TaskListColumn, usize> = HashMap::new();
     for column in &columns {
-        column_widths.insert(*column, column_label(*column).len().max(4));
+        // Use character count for header labels too (though they're ASCII, this is consistent)
+        let label = column_label(*column);
+        column_widths.insert(*column, label.chars().count().max(4));
     }
 
     for row in &rows {
         for column in &columns {
             if let Some(value) = row.values.get(column) {
+                // Use character count for width calculation to handle multi-byte characters correctly
+                let char_count = value.chars().count();
                 let max_len = if *column == TaskListColumn::Description {
-                    value.len().min(50)
+                    char_count.min(50)
                 } else {
-                    value.len()
+                    char_count
                 };
                 let entry = column_widths.entry(*column).or_insert(4);
                 *entry = (*entry).max(max_len);
@@ -571,13 +586,33 @@ pub fn format_task_list_table(
     if !options.full_width {
         let terminal_width = get_terminal_width();
 
-        // Helper to calculate total width
+        // Helper to calculate total width (columns + spaces between them)
+        // Last column doesn't need trailing space, so we need (n-1) spaces for n columns
         fn calc_total_width(columns: &[TaskListColumn], column_widths: &HashMap<TaskListColumn, usize>) -> usize {
-            columns.iter().map(|c| column_widths.get(c).unwrap_or(&4) + 1).sum::<usize>()
+            if columns.is_empty() {
+                return 0;
+            }
+            let content_width: usize = columns.iter()
+                .map(|c| column_widths.get(c).copied().unwrap_or(4))
+                .sum();
+            // Spaces between columns (n-1 spaces for n columns)
+            let spacing = columns.len().saturating_sub(1);
+            content_width + spacing
         }
 
         // If total width exceeds terminal, start hiding columns by priority (highest priority number = hide first)
-        while calc_total_width(&columns, &column_widths) > terminal_width && columns.len() > 2 {
+        // Add a buffer to account for formatting differences, ANSI codes, and rounding
+        // Buffer accounts for: potential newline handling, ANSI codes in bold formatting, rounding errors,
+        // and any discrepancies between calculated width and actual formatted output
+        // Increased to 10 to handle edge cases where calculations don't perfectly match output
+        let target_width = terminal_width.saturating_sub(10); // Leave 10 char buffer for safety
+        let mut iterations = 0;
+        const MAX_ITERATIONS: usize = 20; // Prevent infinite loops
+        while calc_total_width(&columns, &column_widths) > target_width 
+            && columns.len() > 2 
+            && iterations < MAX_ITERATIONS {
+            iterations += 1;
+            
             // Find the lowest priority column (highest priority number) that can be hidden
             let hide_candidate = columns.iter()
                 .filter(|c| column_priority(**c) > 1) // Never hide priority 1 columns (ID, Queue)
@@ -586,26 +621,61 @@ pub fn format_task_list_table(
 
             if let Some(col_to_hide) = hide_candidate {
                 columns.retain(|c| *c != col_to_hide);
+                // Remove from column_widths to avoid stale entries
+                column_widths.remove(&col_to_hide);
             } else {
                 break; // No more columns to hide
             }
         }
 
         // If still too wide, truncate Description to minimum width
-        let current_total = calc_total_width(&columns, &column_widths);
-        if current_total > terminal_width {
+        // Use the same target_width from above (10 char buffer)
+        let mut current_total = calc_total_width(&columns, &column_widths);
+        if current_total > target_width && columns.contains(&TaskListColumn::Description) {
             if let Some(width) = column_widths.get_mut(&TaskListColumn::Description) {
-                let excess = current_total.saturating_sub(terminal_width);
-                *width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
+                let excess = current_total.saturating_sub(target_width);
+                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
+                *width = new_width;
+                // Recalculate total after truncation
+                current_total = calc_total_width(&columns, &column_widths);
             }
         }
 
         // If still too wide, truncate Project to minimum width
-        let current_total = calc_total_width(&columns, &column_widths);
-        if current_total > terminal_width {
+        if current_total > target_width && columns.contains(&TaskListColumn::Project) {
             if let Some(width) = column_widths.get_mut(&TaskListColumn::Project) {
-                let excess = current_total.saturating_sub(terminal_width);
-                *width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Project));
+                let excess = current_total.saturating_sub(target_width);
+                let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Project));
+                *width = new_width;
+                // Recalculate total after truncation
+                current_total = calc_total_width(&columns, &column_widths);
+            }
+        }
+        
+        // Final safety check: if still too wide after all adjustments, aggressively truncate
+        // This handles edge cases where calculations don't perfectly match output
+        // Keep iterating until we're definitely under the target width
+        let mut safety_iterations = 0;
+        const MAX_SAFETY_ITERATIONS: usize = 10;
+        while calc_total_width(&columns, &column_widths) > target_width && safety_iterations < MAX_SAFETY_ITERATIONS {
+            safety_iterations += 1;
+            let current_check = calc_total_width(&columns, &column_widths);
+            let excess = current_check.saturating_sub(target_width);
+            
+            // Try Description first
+            if columns.contains(&TaskListColumn::Description) {
+                if let Some(width) = column_widths.get_mut(&TaskListColumn::Description) {
+                    *width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Description));
+                }
+            }
+            
+            // Then try Project if still too wide
+            let check_after_desc = calc_total_width(&columns, &column_widths);
+            if check_after_desc > target_width && columns.contains(&TaskListColumn::Project) {
+                if let Some(width) = column_widths.get_mut(&TaskListColumn::Project) {
+                    let excess2 = check_after_desc.saturating_sub(target_width);
+                    *width = (*width).saturating_sub(excess2).max(column_min_width(TaskListColumn::Project));
+                }
             }
         }
     }
@@ -699,11 +769,13 @@ pub fn format_task_list_table(
                     raw_value
                 };
                 // Apply bold to ID column in TTY mode
-                let formatted = format!("{:<width$}", value, width = width);
+                // Note: We need to pad first, then apply bold, to ensure display width is correct
                 let formatted = if *column == TaskListColumn::Id && tty_mode {
-                    bold_if_tty(&formatted, true)
+                    // For ID column with bold, pad the value first, then wrap with ANSI codes
+                    let padded = format!("{:<width$}", value, width = width);
+                    bold_if_tty(&padded, true)
                 } else {
-                    formatted
+                    format!("{:<width$}", value, width = width)
                 };
                 if idx == columns.len() - 1 {
                     output.push_str(&format!("{}\n", formatted));
@@ -759,11 +831,13 @@ pub fn format_task_list_table(
                         raw_value
                     };
                     // Apply bold to ID column in TTY mode
-                    let formatted = format!("{:<width$}", value, width = width);
+                    // Note: We need to pad first, then apply bold, to ensure display width is correct
                     let formatted = if *column == TaskListColumn::Id && tty_mode {
-                        bold_if_tty(&formatted, true)
+                        // For ID column with bold, pad the value first, then wrap with ANSI codes
+                        let padded = format!("{:<width$}", value, width = width);
+                        bold_if_tty(&padded, true)
                     } else {
-                        formatted
+                        format!("{:<width$}", value, width = width)
                     };
                     if idx == columns.len() - 1 {
                         output.push_str(&format!("{}\n", formatted));

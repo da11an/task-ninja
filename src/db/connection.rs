@@ -9,9 +9,7 @@ pub struct DbConnection;
 impl DbConnection {
     /// Get the default database path
     pub fn default_path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .expect("HOME environment variable not set");
-        PathBuf::from(home).join(".tatl").join("ledger.db")
+        Self::home_dir().join(".tatl").join("ledger.db")
     }
 
     /// Get database path from configuration file or default
@@ -40,11 +38,14 @@ impl DbConnection {
         Ok(Self::default_path())
     }
 
+    /// Get the home directory (cross-platform)
+    fn home_dir() -> PathBuf {
+        dirs::home_dir().expect("Could not determine home directory")
+    }
+
     /// Get the configuration file path
     pub fn config_path() -> PathBuf {
-        let home = std::env::var("HOME")
-            .expect("HOME environment variable not set");
-        PathBuf::from(home).join(".tatl").join("rc")
+        Self::home_dir().join(".tatl").join("rc")
     }
 
     /// Connect to the database, creating it and parent directories if needed

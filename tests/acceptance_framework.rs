@@ -32,8 +32,11 @@ impl AcceptanceTestContext {
         let config_file = config_dir.join("rc");
         fs::write(&config_file, format!("data.location={}\n", db_path.display())).unwrap();
         
-        // Set HOME environment variable
+        // Set home directory environment variable (cross-platform)
+        #[cfg(unix)]
         std::env::set_var("HOME", temp_dir.path().to_str().unwrap());
+        #[cfg(windows)]
+        std::env::set_var("USERPROFILE", temp_dir.path().to_str().unwrap());
         
         // Connect to database
         let conn = DbConnection::connect().unwrap();
@@ -49,7 +52,10 @@ impl AcceptanceTestContext {
     /// Get a command instance configured for this test context
     pub fn cmd(&self) -> Command {
         let mut cmd = Command::cargo_bin("tatl").unwrap();
+        #[cfg(unix)]
         cmd.env("HOME", self.temp_dir.path());
+        #[cfg(windows)]
+        cmd.env("USERPROFILE", self.temp_dir.path());
         cmd
     }
     

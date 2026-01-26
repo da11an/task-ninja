@@ -1,6 +1,8 @@
 use tatl::cli::run;
 
 fn main() {
+    #[cfg(windows)]
+    let _ = enable_ansi_support::enable_ansi_support();
     if let Err(e) = run() {
         // Check if this is an internal error (database corruption, etc.)
         let error_str: String = e.to_string();

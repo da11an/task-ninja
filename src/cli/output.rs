@@ -15,16 +15,13 @@ const ANSI_BOLD: &str = "\x1b[1m";
 const ANSI_RESET: &str = "\x1b[0m";
 
 // ANSI foreground colors (standard 16-color palette)
-const ANSI_FG_BLACK: &str = "\x1b[30m";
 const ANSI_FG_RED: &str = "\x1b[31m";
 const ANSI_FG_GREEN: &str = "\x1b[32m";
 const ANSI_FG_YELLOW: &str = "\x1b[33m";
 const ANSI_FG_BLUE: &str = "\x1b[34m";
 const ANSI_FG_MAGENTA: &str = "\x1b[35m";
 const ANSI_FG_CYAN: &str = "\x1b[36m";
-const ANSI_FG_WHITE: &str = "\x1b[37m";
 const ANSI_FG_BRIGHT_BLACK: &str = "\x1b[90m";
-const ANSI_FG_BRIGHT_RED: &str = "\x1b[91m";
 const ANSI_FG_BRIGHT_GREEN: &str = "\x1b[92m";
 const ANSI_FG_BRIGHT_YELLOW: &str = "\x1b[93m";
 const ANSI_FG_BRIGHT_BLUE: &str = "\x1b[94m";
@@ -904,7 +901,6 @@ pub fn format_task_list_table(
                 let excess = current_total.saturating_sub(target_width);
                 let new_width = (*width).saturating_sub(excess).max(column_min_width(TaskListColumn::Project));
                 *width = new_width;
-                current_total = calc_total_width(&columns, &column_widths);
             }
         }
 

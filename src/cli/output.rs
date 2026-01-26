@@ -466,10 +466,10 @@ pub fn format_task_list_table(
         };
         
         // Queue position indicator
-        // Priority: queue position/▶ > @ (external) > ✓ (completed) > x (closed) > ! (stalled) > ? (proposed)
+        // Priority: queue position/⏻ > @ (external) > ✓ (completed) > x (closed) > ! (stalled) > ? (proposed)
         let queue_pos_str = if stack_pos == Some(0) && open_session_task_id == task.id {
             // Active task at top of queue
-            "▶".to_string()
+            "⏻".to_string()
         } else if let Some(p) = stack_pos {
             // In queue with numeric position
             p.to_string()
@@ -543,7 +543,7 @@ pub fn format_task_list_table(
             columns.push(column);
         }
     }
-    for column in [TaskListColumn::Id, TaskListColumn::Queue, TaskListColumn::Description] {
+    for column in [TaskListColumn::Queue, TaskListColumn::Id, TaskListColumn::Description] {
         if !columns.contains(&column) {
             columns.push(column);
         }

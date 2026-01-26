@@ -461,8 +461,8 @@ EXAMPLES:
         #[arg(long)]
         task: Option<String>,
     },
-    /// Show dashboard with queue, sessions, and statistics
-    #[command(long_about = "Display a composite dashboard view showing:
+    /// Show report with queue, sessions, and statistics
+    #[command(long_about = "Display a composite report view showing:
 - Current work queue with immediate priorities
 - Today's work sessions with running total
 - This week's statistics and project breakdown
@@ -475,9 +475,9 @@ PERIOD:
   - year: Show this year's data
 
 EXAMPLES:
-  tatl dashboard
-  tatl dashboard --period=month")]
-    Dashboard {
+  tatl report
+  tatl report --period=month")]
+    Report {
         /// Time period for statistics (week, month, year)
         #[arg(long, default_value = "week")]
         period: String,
@@ -679,7 +679,7 @@ pub fn run() -> Result<()> {
         args.iter().any(|a| a == "--help" || a == "-h" || a == "help");
     
     // Note: Status lines have been removed from individual commands.
-    // Use `task status` command for a consolidated dashboard view.
+    // Use `tatl report` command for a consolidated report view.
     // If help would be shown, just show help normally
     if is_help_request {
         // Let clap handle the help (will exit after printing)
@@ -818,8 +818,8 @@ fn handle_command(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Commands::Dashboard { period } => {
-            handle_dashboard(period)
+        Commands::Report { period } => {
+            handle_report(period)
         }
     }
 }
@@ -997,8 +997,8 @@ fn handle_projects(cmd: ProjectCommands) -> Result<()> {
     }
 }
 
-/// Handle the dashboard command
-fn handle_dashboard(period: String) -> Result<()> {
+/// Handle the report command
+fn handle_report(period: String) -> Result<()> {
     use crate::models::TaskStatus;
     use chrono::{Datelike, Duration, NaiveTime};
 
@@ -1094,7 +1094,7 @@ fn handle_dashboard(period: String) -> Result<()> {
     // SECTION 2: Today's Sessions
     let today_sessions = SessionRepo::list_all(&conn)?
         .into_iter()
-        .filter(|s| s.start_ts >= today_start_ts)
+        .filter(|s| s.start_ts >= today_start_ts || s.is_open())
         .collect::<Vec<_>>();
 
     // Helper to get session duration, using current time for open sessions

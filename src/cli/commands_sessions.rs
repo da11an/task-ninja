@@ -4,6 +4,7 @@ use crate::db::DbConnection;
 use crate::repo::{SessionRepo, TaskRepo, AnnotationRepo, ViewRepo};
 use crate::models::Session;
 use crate::cli::error::{user_error, validate_task_id};
+use crate::cli::output::is_tty;
 use crate::filter::{parse_filter, filter_tasks};
 use crate::utils::parse_date_expr;
 use anyhow::{Context, Result};
@@ -12,6 +13,19 @@ use rusqlite::Connection;
 use serde_json;
 use std::io::{self, Write};
 use std::cmp::Ordering;
+
+// ANSI escape codes for terminal formatting
+const ANSI_BOLD: &str = "\x1b[1m";
+const ANSI_RESET: &str = "\x1b[0m";
+
+/// Apply bold formatting if in TTY mode
+fn bold_if_tty(text: &str, tty: bool) -> String {
+    if tty {
+        format!("{}{}{}", ANSI_BOLD, text, ANSI_RESET)
+    } else {
+        text.to_string()
+    }
+}
 
 /// Format timestamp for display
 fn format_timestamp(ts: i64) -> String {
@@ -521,6 +535,8 @@ fn format_sessions_list_table(
         }
     }
     
+    let tty_mode = is_tty();
+    
     if group_columns.is_empty() {
         for row in &rows {
             for (idx, column) in columns.iter().enumerate() {
@@ -531,10 +547,17 @@ fn format_sessions_list_table(
                 } else {
                     raw_value
                 };
-                if idx == columns.len() - 1 {
-                    output.push_str(&format!("{:<width$}\n", value, width = width));
+                // Bold session IDs in TTY mode
+                let formatted = if *column == SessionListColumn::SessionId && tty_mode {
+                    let padded = format!("{:<width$}", value, width = width);
+                    bold_if_tty(&padded, true)
                 } else {
-                    output.push_str(&format!("{:<width$} ", value, width = width));
+                    format!("{:<width$}", value, width = width)
+                };
+                if idx == columns.len() - 1 {
+                    output.push_str(&format!("{}\n", formatted));
+                } else {
+                    output.push_str(&format!("{} ", formatted));
                 }
             }
         }
@@ -577,10 +600,17 @@ fn format_sessions_list_table(
                     } else {
                         raw_value
                     };
-                    if idx == columns.len() - 1 {
-                        output.push_str(&format!("{:<width$}\n", value, width = width));
+                    // Bold session IDs in TTY mode
+                    let formatted = if *column == SessionListColumn::SessionId && tty_mode {
+                        let padded = format!("{:<width$}", value, width = width);
+                        bold_if_tty(&padded, true)
                     } else {
-                        output.push_str(&format!("{:<width$} ", value, width = width));
+                        format!("{:<width$}", value, width = width)
+                    };
+                    if idx == columns.len() - 1 {
+                        output.push_str(&format!("{}\n", formatted));
+                    } else {
+                        output.push_str(&format!("{} ", formatted));
                     }
                 }
             }

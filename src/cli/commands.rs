@@ -56,12 +56,22 @@ RESPAWN PATTERNS:
 
 If --onoff is specified, it takes precedence over --on and --enqueue.
 
+ACTION FLAGS:
+  --finish             - Create task already marked as completed (triggers respawn)
+  --close              - Create task already marked as closed (triggers respawn)
+
+  Note: --finish and --close conflict with --on and --enqueue. They can be combined with --onoff
+  to record historical effort before completing/closing.
+
 EXAMPLES:
   tatl add \"Fix bug\" project:work +urgent
   tatl add \"Review PR\" due:tomorrow allocation:1h
   tatl add \"Daily standup\" respawn:daily due:09:00
   tatl add --on \"Start working on feature\"
-  tatl add \"Forgot to track meeting\" --onoff 14:00..15:00 project:meetings")]
+  tatl add \"Forgot to track meeting\" --onoff 14:00..15:00 project:meetings
+  tatl add \"Already done task\" --finish
+  tatl add \"Meeting\" --onoff 14:00..15:00 --finish  # Historical session + complete
+  tatl add \"Cancelled request\" project:work --close")]
     Add {
         /// Start timing immediately after creation. If TIME is provided (e.g., --on=14:00), the session starts at that time instead of now. Pushes task to queue[0].
         #[arg(long = "on", visible_alias = "clock-in", num_args = 0..=1, require_equals = true, default_missing_value = "")]
@@ -72,6 +82,12 @@ EXAMPLES:
         /// Add task to end of queue without starting timing
         #[arg(long = "enqueue")]
         enqueue: bool,
+        /// Mark task as completed immediately after creation (triggers respawn). Cannot be combined with --on or --enqueue.
+        #[arg(long = "finish")]
+        finish: bool,
+        /// Mark task as closed immediately after creation (triggers respawn). Cannot be combined with --on, --enqueue, or --finish.
+        #[arg(long = "close")]
+        close: bool,
         /// Auto-confirm prompts (create new projects, modify overlapping sessions)
         #[arg(short = 'y', long)]
         yes: bool,
@@ -711,7 +727,7 @@ pub fn run() -> Result<()> {
 fn handle_command(cli: Cli) -> Result<()> {
     match cli.command {
         Commands::Projects { subcommand } => handle_projects(subcommand),
-        Commands::Add { args, start_timing, onoff_interval, enqueue, yes } => handle_task_add(args, start_timing, onoff_interval, enqueue, yes),
+        Commands::Add { args, start_timing, onoff_interval, enqueue, finish, close, yes } => handle_task_add(args, start_timing, onoff_interval, enqueue, finish, close, yes),
         Commands::List { filter, json, relative, full } => {
             handle_task_list(filter, json, relative, full)
         },
@@ -1245,35 +1261,39 @@ fn handle_report(period: String) -> Result<()> {
 
     if !overdue_tasks.is_empty() {
         has_attention_items = true;
-        let overdue_list: Vec<String> = overdue_tasks.iter()
-            .take(3)
-            .map(|(t, _)| {
-                let days = (now.timestamp() - t.due_ts.unwrap_or(0)) / 86400;
-                format!("#{} {} ({} days)", t.id.unwrap_or(0),
-                    t.description.chars().take(20).collect::<String>(), days)
-            })
-            .collect();
-        println!(" Overdue ({}):     {}", overdue_tasks.len(), overdue_list.join(", "));
+        println!(" Overdue ({}):", overdue_tasks.len());
+        for (t, _) in overdue_tasks.iter().take(3) {
+            let days = (now.timestamp() - t.due_ts.unwrap_or(0)) / 86400;
+            println!("   #{:<4} {} ({} days)", t.id.unwrap_or(0),
+                t.description.chars().take(40).collect::<String>(), days);
+        }
+        if overdue_tasks.len() > 3 {
+            println!("   ... and {} more", overdue_tasks.len() - 3);
+        }
     }
 
     if !stalled_tasks.is_empty() {
         has_attention_items = true;
-        let stalled_list: Vec<String> = stalled_tasks.iter()
-            .take(3)
-            .map(|(t, _)| format!("#{} {}", t.id.unwrap_or(0),
-                t.description.chars().take(20).collect::<String>()))
-            .collect();
-        println!(" Stalled ({}):     {}", stalled_tasks.len(), stalled_list.join(", "));
+        println!(" Stalled ({}):", stalled_tasks.len());
+        for (t, _) in stalled_tasks.iter().take(3) {
+            println!("   #{:<4} {}", t.id.unwrap_or(0),
+                t.description.chars().take(50).collect::<String>());
+        }
+        if stalled_tasks.len() > 3 {
+            println!("   ... and {} more", stalled_tasks.len() - 3);
+        }
     }
 
     if !external_tasks.is_empty() {
         has_attention_items = true;
-        let external_list: Vec<String> = external_tasks.iter()
-            .take(3)
-            .map(|(t, _)| format!("#{} {}", t.id.unwrap_or(0),
-                t.description.chars().take(20).collect::<String>()))
-            .collect();
-        println!(" External ({}):    {}", external_tasks.len(), external_list.join(", "));
+        println!(" External ({}):", external_tasks.len());
+        for (t, _) in external_tasks.iter().take(3) {
+            println!("   #{:<4} {}", t.id.unwrap_or(0),
+                t.description.chars().take(50).collect::<String>());
+        }
+        if external_tasks.len() > 3 {
+            println!("   ... and {} more", external_tasks.len() - 3);
+        }
     }
 
     if !has_attention_items {
@@ -1550,8 +1570,8 @@ fn handle_externals(filter: Option<String>) -> Result<()> {
     Ok(())
 }
 
-fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut onoff_interval: Option<String>, mut enqueue: bool, auto_yes: bool) -> Result<()> {
-    // Extract --on, --onoff, and --enqueue flags from args if they appear after the description
+fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut onoff_interval: Option<String>, mut enqueue: bool, mut finish: bool, mut close: bool, auto_yes: bool) -> Result<()> {
+    // Extract --on, --onoff, --enqueue, --finish, --close flags from args if they appear after the description
     // (CLAP limitation: with trailing_var_arg, flags after args are treated as part of args)
     let mut filtered_args = Vec::new();
     let mut i = 0;
@@ -1567,6 +1587,10 @@ fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut 
         } else if args[i] == "--enqueue" {
             enqueue = true;
             // Don't include it in the args passed to parse_task_args
+        } else if args[i] == "--finish" {
+            finish = true;
+        } else if args[i] == "--close" {
+            close = true;
         } else if args[i] == "--onoff" {
             // Take the next arg as the interval
             if i + 1 < args.len() {
@@ -1582,6 +1606,23 @@ fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut 
         i += 1;
     }
     args = filtered_args;
+    
+    // Validate flag conflicts
+    if finish && close {
+        user_error("Cannot use both --finish and --close. They are mutually exclusive.");
+    }
+    if finish && start_timing.is_some() {
+        user_error("Cannot use --finish with --on. Cannot start and finish simultaneously.");
+    }
+    if close && start_timing.is_some() {
+        user_error("Cannot use --close with --on. Cannot start and close simultaneously.");
+    }
+    if finish && enqueue {
+        user_error("Cannot use --finish with --enqueue. Cannot enqueue a completed task.");
+    }
+    if close && enqueue {
+        user_error("Cannot use --close with --enqueue. Cannot enqueue a closed task.");
+    }
     
     if args.is_empty() {
         user_error("Task description is required");
@@ -1836,6 +1877,41 @@ fn handle_task_add(mut args: Vec<String>, mut start_timing: Option<String>, mut 
         StackRepo::enqueue(&conn, stack.id.unwrap(), task_id)
             .context("Failed to enqueue task")?;
         println!("Enqueued task {}", task_id);
+    }
+    
+    // Handle --finish or --close flags (after task creation and optional session)
+    if finish {
+        // Mark task as completed
+        use crate::models::TaskStatus;
+        let now = chrono::Utc::now().timestamp();
+        TaskRepo::set_status(&conn, task_id, TaskStatus::Completed)
+            .context("Failed to mark task as completed")?;
+        println!("Marked task {} as completed", task_id);
+        
+        // Trigger respawn if applicable
+        let task = TaskRepo::get_by_id(&conn, task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
+        if task.respawn.is_some() {
+            if let Some(new_task_id) = crate::respawn::respawn_task(&conn, &task, now)? {
+                println!("Respawned: Created task {} from respawn rule", new_task_id);
+            }
+        }
+    } else if close {
+        // Mark task as closed
+        use crate::models::TaskStatus;
+        let now = chrono::Utc::now().timestamp();
+        TaskRepo::set_status(&conn, task_id, TaskStatus::Closed)
+            .context("Failed to mark task as closed")?;
+        println!("Marked task {} as closed", task_id);
+        
+        // Trigger respawn if applicable
+        let task = TaskRepo::get_by_id(&conn, task_id)?
+            .ok_or_else(|| anyhow::anyhow!("Task not found"))?;
+        if task.respawn.is_some() {
+            if let Some(new_task_id) = crate::respawn::respawn_task(&conn, &task, now)? {
+                println!("Respawned: Created task {} from respawn rule", new_task_id);
+            }
+        }
     }
     
     Ok(())

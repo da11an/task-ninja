@@ -182,6 +182,9 @@ tatl add "Description" project:name +tag due:tomorrow
 tatl add "Quick task" --on          # Create and start timing
 tatl add "Meeting" --on=14:00       # Create and start timing at 14:00
 tatl add "Past work" --onoff 09:00..12:00  # Create with historical session
+tatl add "Already done" --finish    # Create already completed
+tatl add "Cancelled" --close        # Create already closed
+tatl add "Past meeting" --onoff 14:00..15:00 --finish  # Historical session + complete
 
 # Read
 tatl list                           # All pending tasks

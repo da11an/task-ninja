@@ -18,7 +18,7 @@ Complete reference for all Tatl commands with examples and usage patterns.
 
 ## Task Commands
 
-### `tatl add [--on] [--onoff <start>..<end>] [--enqueue] [-y] <description> [attributes...]`
+### `tatl add [--on] [--onoff <start>..<end>] [--enqueue] [--finish] [--close] [-y] <description> [attributes...]`
 
 Add a new task with optional attributes.
 
@@ -29,9 +29,14 @@ Add a new task with optional attributes.
 - `--on=<time>` - Same as `--on`, but start session at the specified time (e.g., `--on=14:00`)
 - `--onoff <start>..<end>` - Create task and add historical session for the specified interval
 - `--enqueue` - Automatically enqueue task to queue after creating (adds to end, does not start timing)
+- `--finish` - Mark task as completed immediately after creation (triggers respawn if applicable)
+- `--close` - Mark task as closed immediately after creation (triggers respawn if applicable)
 - `-y` - Auto-confirm prompts (create new projects, modify overlapping sessions)
 
-**Note:** If `--onoff` is specified, it takes precedence over `--on` and `--enqueue`.
+**Notes:**
+- If `--onoff` is specified, it takes precedence over `--on` and `--enqueue`.
+- `--finish` and `--close` can be combined with `--onoff` to record historical effort before completing/closing.
+- `--finish` and `--close` cannot be combined with `--on` or `--enqueue`.
 
 **Attributes:**
 - `project:<name>` - Assign to project
@@ -76,6 +81,14 @@ tatl add --enqueue "Write tests" project:work due:tomorrow allocation:2h
 # Task with --onoff (create task and add historical session)
 tatl add "Emergency meeting" --onoff 14:00..15:00 project:meetings
 tatl add "Support request" --onoff 10:30..11:00 +support
+
+# Task with --finish (create already completed task)
+tatl add --finish "Already done task" project:work
+tatl add "Fixed bug yesterday" --onoff 14:00..15:00 --finish project:work
+
+# Task with --close (create already closed task)
+tatl add --close "Cancelled request" project:work
+tatl add "Started but abandoned" --onoff 09:00..10:00 --close
 
 # Task with new project (interactive prompt)
 tatl add "New feature" project:newproject

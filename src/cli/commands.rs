@@ -707,9 +707,56 @@ fn execute_piped_command(task_id: i64, segment: &[String]) -> Result<i64> {
             handle_send(task_id.to_string(), recipient, request)?;
             Ok(task_id)
         }
+        "collect" => {
+            handle_collect(task_id.to_string())?;
+            Ok(task_id)
+        }
+        "off" => {
+            // Stop timing for the task from previous command
+            let conn = DbConnection::connect()
+                .context("Failed to connect to database")?;
+            
+            // Check if there's an open session for this task
+            let open_session = SessionRepo::get_open(&conn)?;
+            
+            if let Some(session) = open_session {
+                if session.task_id == task_id {
+                    // This task has an open session - close it
+                    let end_ts = if rest.is_empty() {
+                        chrono::Utc::now().timestamp()
+                    } else {
+                        let end_expr = rest.join(" ");
+                        parse_date_expr(&end_expr)
+                            .context("Invalid end time expression")?
+                    };
+                    
+                    // Ensure end_ts is after start_ts (handle micro-sessions)
+                    let end_ts = std::cmp::max(end_ts, session.start_ts + 1);
+                    
+                    if let Err(e) = SessionRepo::close_open(&conn, end_ts) {
+                        // If closing fails (e.g., session was already closed/purged), 
+                        // just continue - idempotent behavior
+                        eprintln!("Warning: Could not close session: {}", e);
+                    } else {
+                        let task = TaskRepo::get_by_id(&conn, task_id)?;
+                        let desc = task.as_ref().map(|t| t.description.as_str()).unwrap_or("");
+                        println!("Stopped timing task {}: {}", task_id, desc);
+                    }
+                }
+                // If open session is for a different task, do nothing (idempotent)
+            }
+            // If no open session, do nothing (idempotent)
+            
+            Ok(task_id)
+        }
+        "dequeue" => {
+            // Remove task from queue (uses task_id from previous command)
+            handle_dequeue(Some(task_id.to_string()))?;
+            Ok(task_id)
+        }
         _ => {
             anyhow::bail!(
-                "Unknown pipe command: '{}'. Valid: on, onoff, enqueue, finish, close, annotate, send",
+                "Unknown pipe command: '{}'. Valid: on, onoff, enqueue, finish, close, annotate, send, collect, off, dequeue",
                 cmd
             );
         }
@@ -828,8 +875,107 @@ pub fn run() -> Result<()> {
                     0
                 }
             }
+            Commands::Enqueue { task_id: task_id_str } => {
+                // Parse task ID(s) - for piping, we'll use the first one
+                let task_ids = parse_task_id_list(&task_id_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?;
+                if task_ids.is_empty() {
+                    anyhow::bail!("No task IDs provided to enqueue");
+                }
+                handle_task_enqueue(task_id_str)?;
+                task_ids[0] // Return first task ID for piping
+            }
+            Commands::Close { target, yes, interactive } => {
+                let target_str = target.clone()
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with close requires a task ID as target"))?;
+                handle_task_close_optional(target, yes, interactive)?;
+                // Extract task ID from target (only works with single task ID)
+                validate_task_id(&target_str)
+                    .map_err(|_| anyhow::anyhow!("Pipe operator with close requires a single task ID as target"))?
+            }
+            Commands::Reopen { target, yes, interactive } => {
+                handle_task_reopen(target.clone(), yes, interactive)?;
+                // Extract task ID from target (only works with single task ID)
+                validate_task_id(&target)
+                    .map_err(|_| anyhow::anyhow!("Pipe operator with reopen requires a single task ID as target"))?
+            }
+            Commands::Annotate { target, note, task, yes, interactive, delete } => {
+                if delete.is_some() {
+                    anyhow::bail!("Pipe operator not supported with --delete flag");
+                }
+                let target_str = target.or(task)
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with annotate requires a task ID as target"))?;
+                handle_annotation_add(Some(target_str.clone()), note)?;
+                // Extract task ID from target (only works with single task ID)
+                validate_task_id(&target_str)
+                    .map_err(|_| anyhow::anyhow!("Pipe operator with annotate requires a single task ID as target"))?
+            }
+            Commands::Send { task_id: task_id_str, recipient, request } => {
+                handle_send(task_id_str.clone(), recipient, request)?;
+                validate_task_id(&task_id_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?
+            }
+            Commands::Collect { task_id: task_id_str } => {
+                handle_collect(task_id_str.clone())?;
+                validate_task_id(&task_id_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?
+            }
+            Commands::On { task_id: task_id_opt, time_args } => {
+                let conn = DbConnection::connect()
+                    .context("Failed to connect to database")?;
+                // For piping, we need a task ID - can't use queue[0]
+                let task_id_str = task_id_opt
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with 'on' requires a task ID"))?;
+                handle_task_on(task_id_str.clone(), time_args)?;
+                validate_task_id(&task_id_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?
+            }
+            Commands::Dequeue { task_id: task_id_opt } => {
+                let conn = DbConnection::connect()
+                    .context("Failed to connect to database")?;
+                // For piping, we need a task ID - can't use queue[0]
+                let task_id_str = task_id_opt
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with 'dequeue' requires a task ID"))?;
+                handle_dequeue(Some(task_id_str.clone()))?;
+                validate_task_id(&task_id_str)
+                    .map_err(|e| anyhow::anyhow!("Invalid task ID: {}", e))?
+            }
+            Commands::Onoff { args, yes } => {
+                // For onoff, we need to extract task ID from args if present
+                // onoff can be: "09:00..12:00" or "09:00..12:00 5" or "5 09:00..12:00"
+                // We'll look for a numeric argument that's a valid task ID
+                let mut task_id_opt: Option<i64> = None;
+                for arg in &args {
+                    if let Ok(id) = arg.parse::<i64>() {
+                        let conn = DbConnection::connect()
+                            .context("Failed to connect to database")?;
+                        if TaskRepo::get_by_id(&conn, id)?.is_some() {
+                            task_id_opt = Some(id);
+                            break;
+                        }
+                    }
+                }
+                let task_id = task_id_opt
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with 'onoff' requires a task ID in arguments (e.g., 'onoff 09:00..12:00 5')"))?;
+                handle_onoff(args, yes)?;
+                task_id
+            }
+            Commands::Offon { time_args, yes } => {
+                // offon when no session is running can work on history, but for piping we need a task ID
+                // Check if last argument is a task ID
+                let task_id_opt = time_args.last()
+                    .and_then(|arg| arg.parse::<i64>().ok())
+                    .and_then(|id| {
+                        let conn = DbConnection::connect().ok()?;
+                        TaskRepo::get_by_id(&conn, id).ok()?.map(|_| id)
+                    });
+                let task_id = task_id_opt
+                    .ok_or_else(|| anyhow::anyhow!("Pipe operator with 'offon' requires a task ID in arguments (e.g., 'offon 14:30 5')"))?;
+                handle_offon(time_args, yes)?;
+                task_id
+            }
             _ => {
-                anyhow::bail!("Pipe operator is only supported with add, modify, or finish as the first command");
+                anyhow::bail!("Pipe operator is not supported with this command. Supported commands: add, modify, finish, enqueue, close, reopen, annotate, send, collect, on, dequeue, onoff, offon, off");
             }
         };
 

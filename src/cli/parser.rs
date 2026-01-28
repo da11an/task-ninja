@@ -26,6 +26,10 @@ pub enum FieldParseError {
         field: String,
         suggestion: String,
     },
+    AmbiguousAbbreviation {
+        field: String,
+        matches: Vec<String>,
+    },
     ReadOnlyField {
         field: String,
         hint: String,
@@ -44,6 +48,10 @@ impl std::fmt::Display for FieldParseError {
             FieldParseError::InvalidFieldName { field, suggestion } => {
                 write!(f, "Unrecognized field name '{}'\n  Did you mean '{}'?", field, suggestion)
             }
+            FieldParseError::AmbiguousAbbreviation { field, matches } => {
+                write!(f, "Ambiguous field name '{}'\n  Matches: {}\n  Use a longer prefix to disambiguate, or use the full field name.", 
+                    field, matches.join(", "))
+            }
             FieldParseError::ReadOnlyField { field, hint } => {
                 write!(f, "Field '{}' cannot be modified directly.\n  {}", field, hint)
             }
@@ -57,7 +65,7 @@ impl std::fmt::Display for FieldParseError {
     }
 }
 
-/// Valid field names (exact match only, no abbreviations)
+/// Valid field names (exact match only, no abbreviations) p d s w a t r s c m i
 const FIELD_NAMES: &[&str] = &[
     "project",
     "due",
@@ -76,6 +84,34 @@ const READ_ONLY_FIELDS: &[&str] = &[
     "modified",    // Automatically updated
     "id",          // Immutable
 ];
+
+/// Expand field name abbreviation (for built-in fields only, not UDAs)
+/// Returns Ok(field_name) if unambiguous, Err(matches) if ambiguous, Err(empty) if no match
+/// Similar to command abbreviation logic
+fn expand_field_name_abbreviation(field: &str) -> Result<String, Vec<String>> {
+    // First check for exact match (case-insensitive)
+    let field_lower = field.to_lowercase();
+    for name in FIELD_NAMES {
+        if name.to_lowercase() == field_lower {
+            return Ok(name.to_string());
+        }
+    }
+    
+    // Then check for prefix matches
+    let matches: Vec<&str> = FIELD_NAMES
+        .iter()
+        .filter(|name| name.to_lowercase().starts_with(&field_lower))
+        .copied()
+        .collect();
+    
+    if matches.is_empty() {
+        Err(Vec::new())
+    } else if matches.len() == 1 {
+        Ok(matches[0].to_string())
+    } else {
+        Err(matches.iter().map(|s| s.to_string()).collect())
+    }
+}
 
 /// Find the most similar field name using fuzzy matching
 fn find_similar_field_name(field: &str) -> Option<String> {
@@ -131,21 +167,40 @@ fn parse_field_token(token: &str) -> Result<Option<(String, String)>, FieldParse
             });
         }
 
-        // Exact match only
-        if FIELD_NAMES.contains(&field.as_str()) {
-            return Ok(Some((field, final_value)));
+        // Check if this is a UDA (starts with "uda.")
+        // UDAs cannot be abbreviated to avoid collisions
+        if field.starts_with("uda.") {
+            // UDA - return None to let caller handle it
+            return Ok(None);
         }
 
-        // No exact match - try fuzzy matching for typo suggestions
-        if let Some(suggestion) = find_similar_field_name(&field) {
-            Err(FieldParseError::InvalidFieldName {
-                field,
-                suggestion,
-            })
-        } else {
-            // No similar field found - might be a UDA or invalid
-            // Return None to let caller handle it
-            Ok(None)
+        // Try abbreviation expansion for built-in fields only
+        match expand_field_name_abbreviation(&field) {
+            Ok(expanded_field) => {
+                // Unambiguous abbreviation - use expanded field name
+                Ok(Some((expanded_field, final_value)))
+            }
+            Err(matches) => {
+                if !matches.is_empty() {
+                    // Ambiguous abbreviation
+                    return Err(FieldParseError::AmbiguousAbbreviation {
+                        field,
+                        matches,
+                    });
+                }
+                
+                // No abbreviation match - try fuzzy matching for typo suggestions
+                if let Some(suggestion) = find_similar_field_name(&field) {
+                    Err(FieldParseError::InvalidFieldName {
+                        field,
+                        suggestion,
+                    })
+                } else {
+                    // No similar field found - might be a UDA or invalid
+                    // Return None to let caller handle it
+                    Ok(None)
+                }
+            }
         }
     } else {
         Ok(None)
